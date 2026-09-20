@@ -1,0 +1,951 @@
+{
+  "address": "8ZxnPLAfaSja6MrS6z21QZsohrW515v3cjXA3dMucnuX",
+  "metadata": {
+    "name": "fairbake",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "buy",
+      "discriminator": [
+        102,
+        6,
+        61,
+        18,
+        1,
+        218,
+        235,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "buyer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "sale",
+          "writable": true
+        },
+        {
+          "name": "buyer_position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  121,
+                  101,
+                  114,
+                  45,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              },
+              {
+                "kind": "account",
+                "path": "buyer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer_token_account"
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "sale"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "contribution",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "claim",
+      "discriminator": [
+        62,
+        198,
+        214,
+        193,
+        213,
+        159,
+        108,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "sale",
+          "writable": true
+        },
+        {
+          "name": "buyer_position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  121,
+                  101,
+                  114,
+                  45,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              },
+              {
+                "kind": "account",
+                "path": "buyer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sale_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  97,
+                  108,
+                  101,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer_token_account",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "sale"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_for",
+      "discriminator": [
+        245,
+        67,
+        97,
+        44,
+        59,
+        223,
+        144,
+        1
+      ],
+      "accounts": [
+        {
+          "name": "sale",
+          "writable": true
+        },
+        {
+          "name": "buyer_position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  121,
+                  101,
+                  114,
+                  45,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              },
+              {
+                "kind": "account",
+                "path": "buyer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer",
+          "writable": true
+        },
+        {
+          "name": "caller",
+          "signer": true
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sale_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  97,
+                  108,
+                  101,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer_token_account",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "sale"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "finalize_sale",
+      "discriminator": [
+        62,
+        138,
+        254,
+        160,
+        192,
+        113,
+        177,
+        58
+      ],
+      "accounts": [
+        {
+          "name": "keeper",
+          "signer": true
+        },
+        {
+          "name": "sale",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_sale",
+      "discriminator": [
+        208,
+        103,
+        34,
+        154,
+        179,
+        6,
+        125,
+        208
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "sale",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  97,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "creator_token_account",
+          "writable": true
+        },
+        {
+          "name": "sale_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  97,
+                  108,
+                  101,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "sale_supply",
+          "type": "u64"
+        },
+        {
+          "name": "minimum_raise",
+          "type": "u64"
+        },
+        {
+          "name": "hard_cap",
+          "type": "u64"
+        },
+        {
+          "name": "max_per_wallet",
+          "type": "u64"
+        },
+        {
+          "name": "start_time",
+          "type": "i64"
+        },
+        {
+          "name": "end_time",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_inventory",
+      "discriminator": [
+        183,
+        47,
+        104,
+        77,
+        237,
+        242,
+        83,
+        165
+      ],
+      "accounts": [
+        {
+          "name": "sale",
+          "writable": true
+        },
+        {
+          "name": "creator",
+          "signer": true,
+          "relations": [
+            "sale"
+          ]
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "sale"
+          ]
+        },
+        {
+          "name": "creator_token_account",
+          "writable": true
+        },
+        {
+          "name": "sale_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  97,
+                  108,
+                  101,
+                  45,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "withdraw_proceeds",
+      "discriminator": [
+        124,
+        68,
+        215,
+        12,
+        201,
+        136,
+        54,
+        72
+      ],
+      "accounts": [
+        {
+          "name": "sale",
+          "writable": true
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "sale"
+          ]
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sale"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "BuyerPosition",
+      "discriminator": [
+        232,
+        163,
+        167,
+        95,
+        170,
+        210,
+        214,
+        83
+      ]
+    },
+    {
+      "name": "Sale",
+      "discriminator": [
+        202,
+        64,
+        232,
+        171,
+        178,
+        172,
+        34,
+        183
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidSaleSupply",
+      "msg": "Sale supply must be positive"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidMinimumRaise",
+      "msg": "Minimum raise must be positive"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidHardCap",
+      "msg": "Hard cap must be at least the minimum raise"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidWalletCap",
+      "msg": "Maximum per wallet must be positive"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidTimestamps",
+      "msg": "Sale timestamps are invalid"
+    },
+    {
+      "code": 6005,
+      "name": "MintAuthorityNotRevoked",
+      "msg": "The mint authority must be permanently revoked"
+    },
+    {
+      "code": 6006,
+      "name": "FreezeAuthorityNotRevoked",
+      "msg": "The freeze authority must be permanently revoked"
+    },
+    {
+      "code": 6007,
+      "name": "MintSupplyMismatch",
+      "msg": "Mint supply must equal the fixed sale supply"
+    },
+    {
+      "code": 6008,
+      "name": "InsufficientInventory",
+      "msg": "Creator token account has insufficient inventory"
+    },
+    {
+      "code": 6009,
+      "name": "VaultInventoryMismatch",
+      "msg": "Sale vault does not contain the fixed inventory"
+    },
+    {
+      "code": 6010,
+      "name": "SaleNotActive",
+      "msg": "Sale is not active"
+    },
+    {
+      "code": 6011,
+      "name": "OutsideSaleWindow",
+      "msg": "Contribution is outside the sale window"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidContribution",
+      "msg": "Contribution must be positive"
+    },
+    {
+      "code": 6013,
+      "name": "WalletCapExceeded",
+      "msg": "Contribution exceeds the wallet cap"
+    },
+    {
+      "code": 6014,
+      "name": "SaleNotEnded",
+      "msg": "Sale has not ended"
+    },
+    {
+      "code": 6015,
+      "name": "AlreadyFinalized",
+      "msg": "Sale is already finalized"
+    },
+    {
+      "code": 6016,
+      "name": "AlreadyClaimed",
+      "msg": "Buyer position has already been claimed"
+    },
+    {
+      "code": 6017,
+      "name": "NoProceeds",
+      "msg": "No accepted proceeds are available"
+    },
+    {
+      "code": 6018,
+      "name": "ProceedsAlreadyWithdrawn",
+      "msg": "Proceeds are already withdrawn"
+    },
+    {
+      "code": 6019,
+      "name": "ClaimsIncomplete",
+      "msg": "All buyer positions must be claimed before inventory cleanup"
+    },
+    {
+      "code": 6020,
+      "name": "InventoryAlreadyWithdrawn",
+      "msg": "Inventory is already withdrawn"
+    },
+    {
+      "code": 6021,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6022,
+      "name": "TreasuryInsufficient",
+      "msg": "Treasury does not have enough spendable lamports"
+    }
+  ],
+  "types": [
+    {
+      "name": "BuyerPosition",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sale",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyer",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyer_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "contributed",
+            "type": "u64"
+          },
+          {
+            "name": "committed_before",
+            "type": "u64"
+          },
+          {
+            "name": "claimed",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Sale",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator_token_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "sale_supply",
+            "type": "u64"
+          },
+          {
+            "name": "minimum_raise",
+            "type": "u64"
+          },
+          {
+            "name": "hard_cap",
+            "type": "u64"
+          },
+          {
+            "name": "max_per_wallet",
+            "type": "u64"
+          },
+          {
+            "name": "start_time",
+            "type": "i64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          },
+          {
+            "name": "total_committed",
+            "type": "u64"
+          },
+          {
+            "name": "final_accepted_raise",
+            "type": "u64"
+          },
+          {
+            "name": "creator_proceeds",
+            "type": "u64"
+          },
+          {
+            "name": "refund_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "refund_claimed_total",
+            "type": "u64"
+          },
+          {
+            "name": "accepted_claimed_total",
+            "type": "u64"
+          },
+          {
+            "name": "native_refund_dust",
+            "type": "u64"
+          },
+          {
+            "name": "token_allocation_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "buyer_count",
+            "type": "u64"
+          },
+          {
+            "name": "claimed_buyer_count",
+            "type": "u64"
+          },
+          {
+            "name": "treasury_rent_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          },
+          {
+            "name": "treasury_bump",
+            "type": "u8"
+          },
+          {
+            "name": "proceeds_withdrawn",
+            "type": "bool"
+          },
+          {
+            "name": "inventory_withdrawn",
+            "type": "bool"
+          }
+        ]
+      }
+    }
+  ]
+}

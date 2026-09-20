@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+html { background: #ebe9e1; }
+body { margin: 0; color: #1b1d1a; background: #ebe9e1; font-family: Arial, sans-serif; }
+a { color: inherit; text-decoration: none; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+::selection { background: #dfe7d9; }
+
+@layer components {
+  .eyebrow { @apply text-[11px] font-bold uppercase tracking-[0.18em] text-moss; }
+  .button-primary { @apply inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-paper transition hover:bg-orange disabled:cursor-not-allowed disabled:opacity-50; }
+  .button-secondary { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-paper px-5 py-3 text-sm font-semibold text-ink transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-50; }
+  .panel { @apply rounded-2xl border border-line bg-paper shadow-card; }
+  .field { @apply w-full rounded-xl border border-line bg-white/60 px-4 py-3 text-sm outline-none transition placeholder:text-moss/60 focus:border-ink focus:ring-2 focus:ring-sage; }
+  .surface-dark { @apply bg-ink text-paper; }
+  .rail-link { @apply grid h-14 w-16 place-items-center gap-1 rounded-xl text-moss transition hover:bg-cream hover:text-ink; }
+  .rail-link span { @apply text-[10px] font-semibold; }
+  .skeleton { @apply animate-pulse bg-[#e4e3da]; }
+  .route-progress { @apply absolute inset-x-0 bottom-0 h-0.5 origin-left bg-orange; animation: route-progress 1.1s ease-in-out infinite; }
+  .launch-stage { @apply relative overflow-hidden border border-line bg-[#e4e3da]; }
+  .live-panel { @apply relative overflow-hidden border border-[#354333] bg-[#141a15] text-paper; }
+  .live-stage { @apply relative overflow-hidden border-l border-[#354333] bg-[#1a2419]; }
+  .live-panel::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 82% 18%, rgba(190, 242, 100, 0.09), transparent 32%); }
+}
+
+@keyframes route-progress { 0% { transform: scaleX(0.08); } 50% { transform: scaleX(0.58); } 100% { transform: scaleX(0.96); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; } }
