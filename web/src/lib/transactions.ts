@@ -5,8 +5,14 @@ import { createProgram, type WalletSigner } from "./program";
 import { connection } from "./rpc";
 import { findBuyerPositionPda, findSalePda, findTreasuryPda, findVaultPda } from "./pda";
 import { humanizeError, TransactionStageError } from "./errors";
+import type { MintInspection } from "./token-operation";
 
 export type TxResult = { signature: string };
+export type SubmittedTransaction = {
+  signature: string;
+  blockhash: string;
+  lastValidBlockHeight: number;
+};
 
 function transactionDiagnostic(
   stage: string,
@@ -22,7 +28,7 @@ function transactionDiagnostic(
   });
 }
 
-async function send(wallet: WalletSigner, transaction: Transaction, signers: Keypair[] = []): Promise<TxResult> {
+export async function submitTransaction(wallet: WalletSigner, transaction: Transaction, signers: Keypair[] = []): Promise<SubmittedTransaction> {
   let latest;
   transactionDiagnostic("BLOCKHASH_FEE_PAYER", "started");
   try {
@@ -54,33 +60,62 @@ async function send(wallet: WalletSigner, transaction: Transaction, signers: Key
     transactionDiagnostic("RPC_SUBMISSION", "failed", cause);
     throw new TransactionStageError("RPC_SUBMISSION", cause);
   }
+  return { signature, ...latest };
+}
+
+export async function confirmSubmittedTransaction(
+  submitted: SubmittedTransaction,
+): Promise<void> {
   transactionDiagnostic("CONFIRMATION", "started");
   try {
-    await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+    const result = await connection.confirmTransaction(submitted, "confirmed");
+    if (result.value.err)
+      throw new TransactionStageError(
+        "CONFIRMATION",
+        new Error(JSON.stringify(result.value.err)),
+        submitted.signature,
+        "FAILED",
+      );
     transactionDiagnostic("CONFIRMATION", "completed");
   } catch (cause) {
+    if (cause instanceof TransactionStageError) throw cause;
     transactionDiagnostic("CONFIRMATION", "failed", cause);
-    throw new TransactionStageError("CONFIRMATION", cause);
+    throw new TransactionStageError(
+      "CONFIRMATION",
+      cause,
+      submitted.signature,
+      "UNKNOWN",
+    );
   }
-  return { signature };
+}
+
+async function send(wallet: WalletSigner, transaction: Transaction, signers: Keypair[] = []): Promise<TxResult> {
+  const submitted = await submitTransaction(wallet, transaction, signers);
+  await confirmSubmittedTransaction(submitted);
+  return { signature: submitted.signature };
 }
 
 async function instructionTransaction(wallet: WalletSigner, instruction: Parameters<Transaction["add"]>[0], signers: Keypair[] = []) {
   return send(wallet, new Transaction().add(instruction), signers);
 }
 
-export async function createMintAccount(wallet: WalletSigner, decimals: number): Promise<{ mint: PublicKey; signature: string }> {
+export async function buildMintAccountTransaction(wallet: WalletSigner, decimals: number): Promise<{ mint: Keypair; transaction: Transaction }> {
   const mint = Keypair.generate();
   const lamports = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
   const tx = new Transaction().add(
     SystemProgram.createAccount({ fromPubkey: wallet.publicKey, newAccountPubkey: mint.publicKey, lamports, space: MINT_SIZE, programId: TOKEN_PROGRAM_ID }),
     createInitializeMintInstruction(mint.publicKey, decimals, wallet.publicKey, wallet.publicKey, TOKEN_PROGRAM_ID),
   );
-  const result = await send(wallet, tx, [mint]);
-  return { mint: mint.publicKey, signature: result.signature };
+  return { mint, transaction: tx };
 }
 
-export async function mintSupplyAndRevoke(wallet: WalletSigner, mint: PublicKey, amount: bigint): Promise<{ tokenAccount: PublicKey; signature: string }> {
+export async function createMintAccount(wallet: WalletSigner, decimals: number): Promise<{ mint: PublicKey; signature: string }> {
+  const built = await buildMintAccountTransaction(wallet, decimals);
+  const result = await send(wallet, built.transaction, [built.mint]);
+  return { mint: built.mint.publicKey, signature: result.signature };
+}
+
+export async function buildMintSupplyAndRevokeTransaction(wallet: WalletSigner, mint: PublicKey, amount: bigint): Promise<{ tokenAccount: PublicKey; transaction: Transaction }> {
   const tokenAccount = await getAssociatedTokenAddress(mint, wallet.publicKey, false, TOKEN_PROGRAM_ID);
   const tx = new Transaction();
   if (!(await connection.getAccountInfo(tokenAccount, "confirmed"))) {
@@ -91,7 +126,71 @@ export async function mintSupplyAndRevoke(wallet: WalletSigner, mint: PublicKey,
     createSetAuthorityInstruction(mint, wallet.publicKey, AuthorityType.MintTokens, null, [], TOKEN_PROGRAM_ID),
     createSetAuthorityInstruction(mint, wallet.publicKey, AuthorityType.FreezeAccount, null, [], TOKEN_PROGRAM_ID),
   );
-  return { tokenAccount, ...(await send(wallet, tx)) };
+  return { tokenAccount, transaction: tx };
+}
+
+export async function mintSupplyAndRevoke(wallet: WalletSigner, mint: PublicKey, amount: bigint): Promise<{ tokenAccount: PublicKey; signature: string }> {
+  const built = await buildMintSupplyAndRevokeTransaction(wallet, mint, amount);
+  return { tokenAccount: built.tokenAccount, ...(await send(wallet, built.transaction)) };
+}
+
+export async function inspectMint(
+  mint: PublicKey,
+  creator: PublicKey,
+  expectedDecimals: number,
+): Promise<MintInspection> {
+  const account = await connection.getAccountInfo(mint, "confirmed");
+  if (!account)
+    return {
+      exists: false,
+      owner: null,
+      decimals: null,
+      supply: 0n,
+      mintAuthority: null,
+      freezeAuthority: null,
+      creatorBalance: 0n,
+    };
+  if (!account.owner.equals(TOKEN_PROGRAM_ID))
+    return {
+      exists: true,
+      owner: account.owner.toBase58(),
+      decimals: null,
+      supply: 0n,
+      mintAuthority: null,
+      freezeAuthority: null,
+      creatorBalance: 0n,
+      error: `Mint account is owned by ${account.owner.toBase58()}, not the legacy SPL Token Program.`,
+    };
+  try {
+    const info = await getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID);
+    const tokenAccount = await getAssociatedTokenAddress(mint, creator, false, TOKEN_PROGRAM_ID);
+    const balance = await connection
+      .getTokenAccountBalance(tokenAccount, "confirmed")
+      .then((result) => BigInt(result.value.amount))
+      .catch(() => 0n);
+    return {
+      exists: true,
+      owner: account.owner.toBase58(),
+      decimals: info.decimals,
+      supply: BigInt(info.supply.toString()),
+      mintAuthority: info.mintAuthority?.toBase58() ?? null,
+      freezeAuthority: info.freezeAuthority?.toBase58() ?? null,
+      creatorBalance: balance,
+      tokenAccount: tokenAccount.toBase58(),
+      error: info.decimals === expectedDecimals ? undefined : `Mint decimals are ${info.decimals}, expected ${expectedDecimals}.`,
+    };
+  } catch (cause) {
+    return {
+      exists: true,
+      owner: account.owner.toBase58(),
+      decimals: null,
+      supply: 0n,
+      mintAuthority: null,
+      freezeAuthority: null,
+      creatorBalance: 0n,
+      error: cause instanceof Error ? cause.message : String(cause),
+    };
+  }
 }
 
 export async function validateExistingMint(mint: PublicKey, wallet: PublicKey) {

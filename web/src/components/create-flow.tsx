@@ -14,21 +14,29 @@ import { useWallet, useWalletSigner } from "@/lib/wallet";
 import { formatUnits, parseUnits, shorten } from "@/lib/format";
 import {
   initializeSale,
-  createMintAccount,
-  mintSupplyAndRevoke,
+  buildMintAccountTransaction,
+  buildMintSupplyAndRevokeTransaction,
+  submitTransaction,
+  confirmSubmittedTransaction,
+  inspectMint,
   validateExistingMint,
   readableTransactionError,
 } from "@/lib/transactions";
+import { TransactionStageError } from "@/lib/errors";
 import { explorer } from "@/lib/explorer";
 import { FAIRBAKE_PROGRAM_ID } from "@/lib/config";
+import { connection } from "@/lib/rpc";
 import { PublicKey } from "@solana/web3.js";
+import {
+  classifyMintInspection,
+  clearTokenOperation,
+  readTokenOperation,
+  writeTokenOperation,
+  type TokenOperation,
+} from "@/lib/token-operation";
 
 type Mode = "new" | "existing";
-type Operation = {
-  mint?: string;
-  tokenAccount?: string;
-  mintSignature?: string;
-  supplySignature?: string;
+type Operation = Partial<TokenOperation> & {
   sale?: string;
   saleSignature?: string;
 };
@@ -55,28 +63,136 @@ export function CreateFlow() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (publicKey) {
-      try {
-        setOperation(
-          JSON.parse(
-            localStorage.getItem(`fairbake:create:${publicKey.toBase58()}`) ??
-              "{}",
-          ),
-        );
-      } catch {
-        setOperation({});
-      }
+    if (!publicKey) {
+      setOperation({});
+      setRecoveryMessage(null);
+      setStep(1);
+      return;
     }
+    const restored = readTokenOperation(localStorage, publicKey.toBase58());
+    setOperation(restored ?? {});
+    if (restored) {
+      setName(restored.tokenName);
+      setSymbol(restored.symbol);
+      setDecimals(String(restored.decimals));
+      setSupply(formatInputUnits(BigInt(restored.totalSupply), restored.decimals));
+      setSaleSupply(formatInputUnits(BigInt(restored.totalSupply), restored.decimals));
+    }
+    setStep(restored?.phase === "COMPLETE" ? 2 : 1);
   }, [publicKey]);
+
   useEffect(() => {
-    if (publicKey)
-      localStorage.setItem(
-        `fairbake:create:${publicKey.toBase58()}`,
-        JSON.stringify(operation),
-      );
+    if (
+      publicKey &&
+      operation.creator === publicKey.toBase58() &&
+      operation.operationId &&
+      operation.tokenName !== undefined &&
+      operation.symbol !== undefined &&
+      operation.totalSupply &&
+      operation.decimals !== undefined &&
+      operation.phase &&
+      operation.createdAt &&
+      operation.lastUpdatedAt
+    )
+      writeTokenOperation(localStorage, operation as TokenOperation);
   }, [operation, publicKey]);
+
+  function saveOperation(next: Operation) {
+    setOperation(next);
+    if (
+      publicKey &&
+      next.creator === publicKey.toBase58() &&
+      next.operationId &&
+      next.tokenName !== undefined &&
+      next.symbol !== undefined &&
+      next.totalSupply &&
+      next.decimals !== undefined &&
+      next.phase &&
+      next.createdAt &&
+      next.lastUpdatedAt
+    )
+      writeTokenOperation(localStorage, next as TokenOperation);
+  }
+
+  function operationForToken(totalSupply: bigint, tokenDecimals: number): TokenOperation {
+    const now = Date.now();
+    return {
+      operationId: globalThis.crypto?.randomUUID?.() ?? `${now}-${Math.random().toString(16).slice(2)}`,
+      creator: publicKey!.toBase58(),
+      tokenName: name.trim(),
+      symbol: symbol.trim(),
+      totalSupply: totalSupply.toString(),
+      decimals: tokenDecimals,
+      phase: "PREPARED",
+      createdAt: now,
+      lastUpdatedAt: now,
+    };
+  }
+
+  async function reconcileOperation(record: TokenOperation, isCancelled = () => false) {
+    if (!record.mint || isCancelled()) return;
+    setRecoveryMessage("Resuming token setup");
+    const mint = new PublicKey(record.mint);
+    const readSignatureStatus = async (signature?: string) => {
+      if (!signature) return null;
+      try {
+        return (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
+      } catch {
+        return null;
+      }
+    };
+    const [signatureStatus, supplySignatureStatus] = await Promise.all([
+      readSignatureStatus(record.mintTxSignature),
+      readSignatureStatus(record.supplyTxSignature),
+    ]);
+    if (isCancelled()) return;
+    const inspection = await inspectMint(mint, publicKey!, record.decimals);
+    if (isCancelled()) return;
+    const recoveryState = classifyMintInspection(record, inspection);
+    if (recoveryState === "MISSING") {
+      clearTokenOperation(localStorage, record.creator);
+      setOperation({});
+      setRecoveryMessage(null);
+      setNotice("The interrupted mint was not found on Cookie. It is safe to retry token creation.");
+      return;
+    }
+    if (recoveryState === "PARTIAL") {
+      saveOperation({ ...record, phase: "MINT_CONFIRMED", lastUpdatedAt: Date.now() });
+      setMintAddress(record.mint);
+      setRecoveryMessage("Mint created. Supply setup still needs to finish.");
+      setNotice("Token creation was interrupted after the mint was created. Resume setup to mint supply and revoke both authorities.");
+      return;
+    }
+    if (recoveryState === "COMPLETE") {
+      saveOperation({ ...record, phase: "COMPLETE", tokenAccount: inspection.tokenAccount, lastUpdatedAt: Date.now() });
+      setMintAddress(record.mint);
+      setSaleSupply(formatInputUnits(BigInt(record.totalSupply), record.decimals));
+      setRecoveryMessage(null);
+      setNotice("Token setup complete. Continue to terms.");
+      setStep(2);
+      return;
+    }
+    setRecoveryMessage(null);
+    setError(`Mint recovery is blocked${signatureStatus?.err ? ` (TX1 failed: ${JSON.stringify(signatureStatus.err)})` : supplySignatureStatus?.err ? ` (TX2 failed: ${JSON.stringify(supplySignatureStatus.err)})` : ""}: ${inspection.error ?? "the on-chain mint state is not the expected safe state"}`);
+  }
+
+  useEffect(() => {
+    if (!publicKey) return;
+    const restored = readTokenOperation(localStorage, publicKey.toBase58());
+    if (!restored || restored.phase === "COMPLETE") return;
+    let cancelled = false;
+    void reconcileOperation(restored, () => cancelled).catch((cause) => {
+      if (cancelled) return;
+      setRecoveryMessage(null);
+      setError(`Could not reconcile token setup yet: ${cause instanceof Error ? cause.message : String(cause)}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey]);
 
   const tokenDecimals = Number(decimals);
   const parsedTokenSupply = useMemo(() => {
@@ -195,29 +311,72 @@ export function CreateFlow() {
           throw new Error(
             "Enter token name, symbol, supply, and decimals (0–9).",
           );
-        let mint = operation.mint ? new PublicKey(operation.mint) : null;
-        if (!mint) {
-          const created = await createMintAccount(signer!, tokenDecimals);
-          mint = created.mint;
-          setOperation((current) => ({
-            ...current,
-            mint: mint!.toBase58(),
-            mintSignature: created.signature,
-          }));
-        }
-        if (!operation.supplySignature || !operation.tokenAccount) {
-          const minted = await mintSupplyAndRevoke(
-            signer!,
-            mint,
-            parsedTokenSupply,
+        let currentOperation = operation;
+        let mint: PublicKey | null = currentOperation.mint
+          ? new PublicKey(currentOperation.mint)
+          : null;
+        if (currentOperation.mint) {
+          mint = new PublicKey(currentOperation.mint);
+          const inspection = await inspectMint(mint, publicKey!, tokenDecimals);
+          const recoveryState = classifyMintInspection(
+            {
+              creator: publicKey!.toBase58(),
+              totalSupply: parsedTokenSupply.toString(),
+              decimals: tokenDecimals,
+            },
+            inspection,
           );
-          setOperation((current) => ({
-            ...current,
-            mint: mint!.toBase58(),
-            tokenAccount: minted.tokenAccount.toBase58(),
-            supplySignature: minted.signature,
-          }));
+          if (recoveryState === "MISSING") {
+            clearTokenOperation(localStorage, publicKey!.toBase58());
+            currentOperation = {};
+            setOperation({});
+          } else if (recoveryState === "UNSAFE") {
+            throw new Error(`Mint recovery is blocked: ${inspection.error ?? "unexpected on-chain mint state"}`);
+          } else if (recoveryState === "COMPLETE") {
+            saveOperation({ ...currentOperation, phase: "COMPLETE", tokenAccount: inspection.tokenAccount, lastUpdatedAt: Date.now() });
+            setSaleSupply(formatInputUnits(parsedTokenSupply, tokenDecimals));
+            setStep(2);
+            return;
+          }
         }
+        if (!currentOperation.mint) {
+          const prepared = operationForToken(parsedTokenSupply, tokenDecimals);
+          saveOperation(prepared);
+          const built = await buildMintAccountTransaction(signer!, tokenDecimals);
+          const preparedWithMint: TokenOperation = {
+            ...prepared,
+            mint: built.mint.publicKey.toBase58(),
+            lastUpdatedAt: Date.now(),
+          };
+          saveOperation(preparedWithMint);
+          mint = built.mint.publicKey;
+          const submitted = await submitTransaction(signer!, built.transaction, [built.mint]);
+          const submittedOperation: TokenOperation = {
+            ...preparedWithMint,
+            phase: "MINT_SUBMITTED",
+            mintTxSignature: submitted.signature,
+            lastUpdatedAt: Date.now(),
+          };
+          saveOperation(submittedOperation);
+          await confirmSubmittedTransaction(submitted);
+          currentOperation = { ...submittedOperation, phase: "MINT_CONFIRMED", lastUpdatedAt: Date.now() };
+          saveOperation(currentOperation);
+        }
+        const supplyBuilt = await buildMintSupplyAndRevokeTransaction(signer!, mint!, parsedTokenSupply);
+        const supplySubmitted = await submitTransaction(signer!, supplyBuilt.transaction);
+        const supplyOperation: TokenOperation = {
+          ...(currentOperation as TokenOperation),
+          phase: "SUPPLY_SETUP_SUBMITTED",
+          supplyTxSignature: supplySubmitted.signature,
+          tokenAccount: supplyBuilt.tokenAccount.toBase58(),
+          lastUpdatedAt: Date.now(),
+        };
+        saveOperation(supplyOperation);
+        await confirmSubmittedTransaction(supplySubmitted);
+        const finalInspection = await inspectMint(mint!, publicKey!, tokenDecimals);
+        if (classifyMintInspection(supplyOperation, finalInspection) !== "COMPLETE")
+          throw new Error(`Supply setup did not reach the safe final state: ${finalInspection.error ?? "unexpected mint state"}`);
+        saveOperation({ ...supplyOperation, phase: "COMPLETE", lastUpdatedAt: Date.now() });
         setSaleSupply(formatInputUnits(parsedTokenSupply, tokenDecimals));
         setNotice(
           "Token supply is minted exactly once and both authorities are removed. FairBake launches the entire fixed token supply.",
@@ -225,11 +384,17 @@ export function CreateFlow() {
       }
       setStep(2);
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : readableTransactionError(cause),
-      );
+      const persistedOperation = publicKey
+        ? readTokenOperation(localStorage, publicKey.toBase58())
+        : null;
+      if (cause instanceof TransactionStageError && cause.signature && persistedOperation) {
+        saveOperation({
+          ...persistedOperation,
+          phase: "FAILED_RECOVERABLE",
+          lastUpdatedAt: Date.now(),
+        });
+      }
+      setError(readableTransactionError(cause));
     } finally {
       setBusy(null);
     }
@@ -345,6 +510,7 @@ export function CreateFlow() {
               mintAddress={mintAddress}
               setMintAddress={setMintAddress}
               operation={operation}
+              recoveryMessage={recoveryMessage}
               busy={busy}
               onContinue={() => void prepareToken()}
             />
@@ -503,7 +669,7 @@ function Step({
 }
 
 function TokenStep(props: any) {
-  const { mode, setMode, operation, busy } = props;
+  const { mode, setMode, operation, busy, recoveryMessage } = props;
   return (
     <div>
       <p className="eyebrow">Step 1 · Token</p>
@@ -578,6 +744,11 @@ function TokenStep(props: any) {
           Resuming mint {shorten(operation.mint)}
         </p>
       )}
+      {recoveryMessage && (
+        <p className="mt-4 rounded-xl border border-line bg-cream p-4 text-sm leading-6 text-moss">
+          {recoveryMessage}
+        </p>
+      )}
       <button
         className="button-primary mt-8"
         onClick={props.onContinue}
@@ -589,7 +760,7 @@ function TokenStep(props: any) {
           </>
         ) : (
           <>
-            Continue to terms <ChevronRight size={16} />
+            {operation.mint && operation.phase !== "COMPLETE" ? "Resume setup" : "Continue to terms"} <ChevronRight size={16} />
           </>
         )}
       </button>

@@ -27,13 +27,22 @@ export type TransactionStage =
 export class TransactionStageError extends Error {
   readonly stage: TransactionStage;
   readonly cause: unknown;
+  readonly signature?: string;
+  readonly confirmation?: "FAILED" | "UNKNOWN";
 
-  constructor(stage: TransactionStage, cause: unknown) {
+  constructor(
+    stage: TransactionStage,
+    cause: unknown,
+    signature?: string,
+    confirmation?: "FAILED" | "UNKNOWN",
+  ) {
     const message = cause instanceof Error ? cause.message : String(cause);
     super(message);
     this.name = "TransactionStageError";
     this.stage = stage;
     this.cause = cause;
+    this.signature = signature;
+    this.confirmation = confirmation;
   }
 }
 
@@ -68,8 +77,10 @@ export function humanizeError(error: unknown): string {
     return "FairBake could not prepare this transaction.";
   if (stage === "RPC_SUBMISSION")
     return "Cookie Chain rejected the transaction.";
+  if (stage === "CONFIRMATION" && error instanceof TransactionStageError && error.confirmation === "FAILED")
+    return "Transaction was submitted, but Cookie Chain reported it failed. Refresh to reconcile safely.";
   if (stage === "CONFIRMATION")
-    return "Transaction was submitted but confirmation could not be verified.";
+    return "Transaction was submitted, but confirmation is still being checked. Refresh to reconcile safely.";
   if (
     stage === "WALLET_SIGN" &&
     /User rejected|rejected the request|4001|cancel/i.test(text)

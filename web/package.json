@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node --experimental-strip-types --test src/lib/token-operation.test.ts",
     "lint": "next lint",
     "sync-idl": "node scripts/sync-idl.mjs"
   },

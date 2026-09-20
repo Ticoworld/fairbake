@@ -1,5 +1,13 @@
 # Funding Verification
 
+## Current build/provenance note
+
+The Cookie-compatible build command is `anchor build --arch v0`. Deployment
+requires `--no-auto-extend`. The recorded deployment environment is Anchor
+1.2.0, Solana 4.1.2, platform-tools v1.57, and Rust/Cargo 1.98.1. These
+records document the compatible workflow; they do not claim deterministic
+binary reproducibility.
+
 - Deployer: `Eyp6QgYij5Pe4ngcxe9yxttsQzUCMCvBGHrn97p9pSAc`.
 - Cookie RPC: `https://rpc.cookiescan.io`.
 - Cookie balance before operations: `10.000000000 COOK` (`10,000,000,000` lamports).
