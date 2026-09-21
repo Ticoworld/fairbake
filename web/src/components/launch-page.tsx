@@ -227,12 +227,12 @@ export function LaunchPage({ address }: { address: string }) {
               />
             </div>
             <div className="mt-3 grid grid-cols-2 gap-4 text-xs text-moss sm:grid-cols-4">
-              <Fact label="Committed" value={`${formatUnits(sale.data.totalCommitted, 9)} COOK`} />
+              <Fact label="Total contributed" value={`${formatUnits(sale.data.totalCommitted, 9)} COOK`} />
               <Fact label="Hard cap" value={`${formatUnits(sale.data.hardCap, 9)} COOK`} />
               <Fact label="Participants" value={sale.data.buyerCount.toString()} />
               <Fact label="Subscription" value={`${subscriptionPercent.toFixed(1)}%`} />
             </div>
-            {oversubscribed && <p className="mt-5 text-sm text-[#a34c38]">Final allocations will settle pro-rata.</p>}
+            {oversubscribed && <p className="mt-5 text-sm text-[#a34c38]">Contributions will settle pro-rata and excess COOK will be refunded.</p>}
             <div className="mt-8 grid gap-5 border-t border-line pt-6 sm:grid-cols-3">
               <Fact
                 label="Sale allocation"
@@ -268,8 +268,8 @@ export function LaunchPage({ address }: { address: string }) {
             <div className="panel p-5">
               <p className="eyebrow">Supply integrity</p>
               <div className="mt-4 grid gap-3 text-sm">
-                <Integrity label="Mint authority" />
-                <Integrity label="Freeze authority" />
+                <Integrity label="Minting" />
+                <Integrity label="Freezing" />
                 <Integrity label="Terms" />
               </div>
             </div>
@@ -434,10 +434,10 @@ function ParticipationCard({
       ) : status === "LIVE" ? (
         <>
           <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
-            Commit once.
+            Contribute during the sale.
           </h2>
           <p className="mt-2 text-sm leading-6 text-moss">
-            One contribution per wallet. Your accepted amount and refund are
+            Contribute once per wallet. Your accepted amount and refund are
             estimated before you sign.
           </p>
           <div className="mt-6">
@@ -480,7 +480,7 @@ function ParticipationCard({
                 <LoaderCircle size={16} className="animate-spin" /> Confirming…
               </>
             ) : (
-              "Commit contribution"
+              "Contribute COOK"
             )}
           </button>
           <p className="mt-3 text-center text-xs leading-5 text-moss">
@@ -491,11 +491,10 @@ function ParticipationCard({
       ) : status === "ENDED_AWAITING_FINALIZATION" ? (
         <>
           <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
-            Ready to settle.
+            ENDED — AWAITING SETTLEMENT
           </h2>
           <p className="mt-2 text-sm leading-6 text-moss">
-            Finalization is permissionless. Any connected Cookie wallet can
-            execute it.
+            The contribution window has closed. Any Cookie wallet can close and settle the sale.
           </p>
           <button
             className="button-primary mt-6 w-full"
@@ -504,10 +503,10 @@ function ParticipationCard({
           >
             {busy === "finalize" ? (
               <>
-                <LoaderCircle size={16} className="animate-spin" /> Finalizing…
+                <LoaderCircle size={16} className="animate-spin" /> Settling…
               </>
             ) : (
-              "Finalize sale"
+              "Close and settle sale"
             )}
           </button>
         </>
@@ -515,7 +514,7 @@ function ParticipationCard({
         <>
           <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">{status}</h2>
           <p className="mt-2 text-sm leading-6 text-moss">
-            {status === "SUCCESS" ? "The sale settled successfully." : "The minimum raise was not met."} {sale && !position ? "Connect the contributing wallet to view its position." : ""}
+            {status === "SUCCESS" ? "Minimum raise met. Final claims are ready." : "Minimum raise not met. Contributors can reclaim their full COOK contribution."} {sale && !position ? "Connect the contributing wallet to view its position." : ""}
           </p>
         </>
       ) : (
@@ -547,25 +546,40 @@ function PositionView({
   onClaim: () => void;
   busy: string | null;
 }) {
+  const isPreFinalization = status !== "SUCCESS" && status !== "FAILED" && status !== "LIVE" && status !== "UPCOMING";
+  const settled = status === "SUCCESS" || status === "FAILED"
+    ? settlementWithPrefix(position.contributed, sale.data.saleSupply, sale.data.hardCap, sale.data.totalCommitted, position.committedBefore)
+    : null;
+
   return (
     <div className="mt-5 grid gap-4">
-      {(() => {
-        const settled = status === "SUCCESS"
-          ? settlementWithPrefix(position.contributed, sale.data.saleSupply, sale.data.hardCap, sale.data.totalCommitted, position.committedBefore)
-          : { accepted: 0n, refund: position.contributed, allocation: 0n };
-        return <div className="grid gap-3 border-y border-line py-4 text-sm">
-          <Fact label="Committed" value={`${formatUnits(position.contributed, 9)} COOK`} />
-          <Fact label="Accepted" value={`${formatUnits(settled.accepted, 9)} COOK`} />
-          <Fact label="Refund" value={`${formatUnits(settled.refund, 9)} COOK`} />
-          <Fact label="Allocation" value={`${formatTokenAmount(settled.allocation, decimals)} ${sale.metadata?.symbol ?? "tokens"}`} />
-        </div>;
-      })()}
-      {status === "LIVE" || status === "UPCOMING" ? (
+      <div className="grid gap-3 border-y border-line py-4 text-sm">
+        <Fact label="Contribution" value={`${formatUnits(position.contributed, 9)} COOK`} />
+        {isPreFinalization ? (
+          <>
+            <Fact label="Accepted" value="Pending" />
+            <Fact label="COOK refund" value="Pending" />
+            <Fact label="Tokens to claim" value="Pending" />
+          </>
+        ) : (
+          <>
+            <Fact label="Accepted" value={`${formatUnits(settled?.accepted ?? 0n, 9)} COOK`} />
+            <Fact label="COOK refund" value={`${formatUnits(settled?.refund ?? 0n, 9)} COOK`} />
+            <Fact label="Tokens to claim" value={`${formatTokenAmount(settled?.allocation ?? 0n, decimals)} ${sale.metadata?.symbol ?? "tokens"}`} />
+          </>
+        )}
+      </div>
+      {isPreFinalization && (
         <div className="rounded-xl border border-line p-4 text-sm text-moss">
-          Estimated allocation will be knowable after finalization. Your
-          contribution is stored with its position prefix.
+          Final amounts are calculated after the sale closes.
         </div>
-      ) : (
+      )}
+      {(status === "LIVE" || status === "UPCOMING") && (
+        <div className="rounded-xl border border-line p-4 text-sm text-moss">
+          Final amounts will be calculated after the sale closes.
+        </div>
+      )}
+      {status === "SUCCESS" || status === "FAILED" ? (
         <>
           <p className="text-sm text-moss">{position.claimed ? "Claimed." : "Claim available."}</p>
           {!position.claimed && (
@@ -579,12 +593,12 @@ function PositionView({
                   <LoaderCircle size={16} className="animate-spin" /> Settling…
                 </>
               ) : (
-                status === "FAILED" ? "Claim refund" : "Claim allocation"
+                status === "FAILED" ? "Claim full COOK refund" : "Claim tokens & any refund"
               )}
             </button>
           )}
         </>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -605,7 +619,7 @@ function CreatorCard({
       <p className="eyebrow">Creator view</p>
       <div className="mt-4 grid gap-3 text-sm">
         <Fact
-          label="Accepted proceeds"
+          label="Sale proceeds"
           value={`${formatUnits(sale.data.creatorProceeds, 9)} COOK`}
         />
         <Fact
@@ -619,7 +633,7 @@ function CreatorCard({
           disabled={!canTransact || Boolean(busy)}
           onClick={onProceeds}
         >
-          {busy === "proceeds" ? "Withdrawing…" : "Withdraw proceeds"}
+          {busy === "proceeds" ? "Withdrawing…" : "Withdraw sale proceeds"}
         </button>
       )}
       {sale.data.proceedsWithdrawn && (
@@ -633,7 +647,7 @@ function CreatorCard({
         >
           {busy === "inventory"
             ? "Cleaning up…"
-            : "Withdraw remaining inventory"}
+            : "Withdraw remaining sale tokens"}
         </button>
       )}
       {sale.data.inventoryWithdrawn && (
@@ -649,7 +663,7 @@ function Activity({ sale }: { sale: any }) {
       <div className="flex items-end justify-between">
         <div>
           <p className="eyebrow">Activity</p>
-          <h2 className="mt-2 text-xl font-semibold">Verifiable trail</h2>
+          <h2 className="mt-2 text-xl font-semibold">On-chain activity</h2>
         </div>
         <a
           className="inline-flex items-center gap-1 text-xs font-semibold text-moss"
@@ -696,11 +710,12 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 function Integrity({ label }: { label: string }) {
+  const displayLabel = label === "Terms" ? "Sale terms" : label;
   return (
     <div className="flex items-center gap-2">
       <Check size={14} className="text-[#66815c]" />
       <span>
-        {label}: <strong>{label === "Terms" ? "LOCKED" : "REMOVED"}</strong>
+        {displayLabel}: <strong>{label === "Terms" ? "LOCKED" : "DISABLED"}</strong>
       </span>
     </div>
   );

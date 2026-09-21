@@ -8,6 +8,14 @@ const styles: Record<SaleStatus, { text: string; dot: string }> = {
   FAILED: { text: "text-[#c34d35]", dot: "bg-[#c34d35]" },
 };
 
+const labels: Record<SaleStatus, string> = {
+  UPCOMING: "UPCOMING",
+  LIVE: "LIVE",
+  ENDED_AWAITING_FINALIZATION: "ENDED — AWAITING SETTLEMENT",
+  SUCCESS: "SUCCESS",
+  FAILED: "FAILED",
+};
+
 export function StatusPill({ status }: { status: SaleStatus }) {
   const style = styles[status];
   return (
@@ -15,7 +23,7 @@ export function StatusPill({ status }: { status: SaleStatus }) {
       className={`inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] ${style.text}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
-      {status.replaceAll("_", " ")}
+      {labels[status]}
     </span>
   );
 }

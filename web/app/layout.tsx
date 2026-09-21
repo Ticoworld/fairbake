@@ -4,8 +4,8 @@ import { AppProviders } from "@/components/providers";
 import { AppShell } from "@/components/app-shell";
 
 export const metadata: Metadata = {
-  title: "FairBake — fair token launches without the race",
-  description: "Fixed-window token launches on Cookie Chain with transparent pro-rata settlement.",
+  title: "FairBake — fixed-window token sales on Cookie Chain",
+  description: "Contribute during one fixed window. If demand exceeds the hard cap, contributions settle pro-rata and excess COOK is refunded.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

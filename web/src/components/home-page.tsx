@@ -49,8 +49,8 @@ export function HomePage() {
         {preview && <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-orange">Local only</span>}
       </div>
       <div className="flex items-center gap-3">
-        <Link href="/explore?status=COMPLETED" className="button-secondary px-4 py-2.5">History</Link>
-        <Link href="/create" className="button-primary px-4 py-2.5">Create launch <ArrowUpRight size={15}/></Link>
+        <Link href="/explore?status=CLOSED" className="button-secondary px-4 py-2.5">History</Link>
+        <Link href="/create" className="button-primary px-4 py-2.5">Create sale <ArrowUpRight size={15}/></Link>
       </div>
     </section>
  
@@ -59,7 +59,7 @@ export function HomePage() {
     {!loading && (preview || !query.error) && <>
       <section className="mt-6" id="preview-sale">{featured ? <FeaturedLaunch sale={featured.sale} status={featured.status} preview={preview}/> : <NoLiveLaunches/>}</section>
       {open.length > 1 && <section className="mt-10"><div className="mb-4 flex items-end justify-between border-b border-line pb-4"><h2 className="text-xl font-semibold tracking-[-0.03em]">Other live sales</h2><Link href="/explore?status=LIVE" className="inline-flex items-center gap-1 text-xs font-semibold text-moss hover:text-ink">View all <ArrowUpRight size={13}/></Link></div><LaunchGrid sales={open.slice(1).map(({ sale }) => sale)}/></section>}
-      {settled.length > 0 && <section className="mt-10"><div className="mb-4 flex items-end justify-between border-b border-line pb-4"><h2 className="text-xl font-semibold tracking-[-0.03em]">Recent settlements</h2><Link href="/explore?status=COMPLETED" className="inline-flex items-center gap-1 text-xs font-semibold text-moss hover:text-ink">View history <ArrowUpRight size={13}/></Link></div><LaunchGrid sales={settled.slice(0, 4).map(({ sale }) => sale)}/></section>}
+      {settled.length > 0 && <section className="mt-10"><div className="mb-4 flex items-end justify-between border-b border-line pb-4"><h2 className="text-xl font-semibold tracking-[-0.03em]">Recently closed sales</h2><Link href="/explore?status=CLOSED" className="inline-flex items-center gap-1 text-xs font-semibold text-moss hover:text-ink">View history <ArrowUpRight size={13}/></Link></div><LaunchGrid sales={settled.slice(0, 4).map(({ sale }) => sale)}/></section>}
     </>}
   </main>;
 }
@@ -122,7 +122,7 @@ function FeaturedLaunch({ sale, status, preview }: { sale: SaleRecord; status: S
       </div>
       <div className="mt-10">
         <div className={`grid grid-cols-3 border-y py-4 ${isLive ? "border-white/15" : "border-line"}`}>
-          <Metric label="Committed" value={`${formatUnits(sale.data.totalCommitted, 9)} COOK`} dark={isLive}/>
+          <Metric label="Total contributed" value={`${formatUnits(sale.data.totalCommitted, 9)} COOK`} dark={isLive}/>
           <Metric label="Participants" value={sale.data.buyerCount.toString()} dark={isLive}/>
           <Metric label={isLive ? "Ends in" : "Starts in"} value={formatCountdown(remaining)} dark={isLive}/>
         </div>
@@ -133,7 +133,7 @@ function FeaturedLaunch({ sale, status, preview }: { sale: SaleRecord; status: S
       <img src={sale.metadata?.image ?? COOKIE_LOGO_URL} alt="" className={`h-full w-full transition duration-700 group-hover:scale-[1.025] ${imageClass}`}/>
       <div className={`absolute inset-0 ${isLive ? "bg-gradient-to-t from-[#10150f] via-transparent to-[#10150f]/15" : "bg-gradient-to-t from-paper/90 via-transparent to-transparent"}`}/>
       <div className={`absolute inset-x-5 bottom-5 border p-4 backdrop-blur ${isLive ? "border-white/15 bg-[#10150f]/80 text-paper" : "border-line bg-paper/85 text-ink"}`}>
-        <div className="flex items-center justify-between text-xs"><span className={isLive ? "text-[#b8c8b1]" : "text-moss"}>Committed</span><strong>{progress.toFixed(1)}%</strong></div>
+        <div className="flex items-center justify-between text-xs"><span className={isLive ? "text-[#b8c8b1]" : "text-moss"}>Total contributed</span><strong>{progress.toFixed(1)}%</strong></div>
         <div className={`mt-3 h-1.5 overflow-hidden ${isLive ? "bg-white/15" : "bg-cream"}`}><div className={`h-full transition-all duration-700 ${isLive ? "bg-[#c7f36d]" : "bg-ink"}`} style={{ width: `${progress}%` }}/></div>
         <div className={`mt-3 flex justify-between font-mono text-[10px] ${isLive ? "text-[#b8c8b1]" : "text-moss"}`}><span>{formatUnits(sale.data.totalCommitted, 9)} COOK</span><span>{formatUnits(sale.data.hardCap, 9)} COOK cap</span></div>
       </div>
@@ -147,9 +147,9 @@ function NoLiveLaunches() {
     <div className="absolute inset-0 bg-gradient-to-r from-[#10150f] via-[#10150f]/95 via-[42%] to-[#10150f]/10"/>
     <div className="relative z-10 flex min-h-[330px] max-w-full flex-col justify-center p-6 sm:p-8 lg:max-w-[52%]">
       <h2 className="text-3xl font-semibold tracking-[-0.05em] text-paper sm:text-4xl">Nothing live.</h2>
-      <p className="mt-3 max-w-sm text-sm leading-6 text-[#c3cdbd]">There is nothing to join right now.</p>
+      <p className="mt-3 max-w-sm text-sm leading-6 text-[#c3cdbd]">No sales are live right now.</p>
       <div className="mt-7 flex flex-wrap items-center gap-4">
-        <Link href="/explore?status=COMPLETED" className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#61705c] px-5 py-3 text-sm font-semibold text-paper transition hover:border-[#c7f36d] hover:text-[#d8ff92]">History <ArrowUpRight size={15}/></Link>
+        <Link href="/explore?status=CLOSED" className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#61705c] px-5 py-3 text-sm font-semibold text-paper transition hover:border-[#c7f36d] hover:text-[#d8ff92]">History <ArrowUpRight size={15}/></Link>
         {process.env.NODE_ENV !== "production" && <Link href="/?preview=live" className="text-xs font-semibold text-[#c7f36d] underline decoration-[#61705c] underline-offset-4">Preview live state</Link>}
       </div>
     </div>

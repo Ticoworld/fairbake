@@ -134,7 +134,7 @@ export function CreateFlow() {
 
   async function reconcileOperation(record: TokenOperation, isCancelled = () => false) {
     if (!record.mint || isCancelled()) return;
-    setRecoveryMessage("Resuming token setup");
+    setRecoveryMessage("Checking token setup on Cookie");
     const mint = new PublicKey(record.mint);
     const readSignatureStatus = async (signature?: string) => {
       if (!signature) return null;
@@ -156,14 +156,14 @@ export function CreateFlow() {
       clearTokenOperation(localStorage, record.creator);
       setOperation({});
       setRecoveryMessage(null);
-      setNotice("The interrupted mint was not found on Cookie. It is safe to retry token creation.");
+      setNotice("No mint was found on Cookie after reconciliation. Retry token setup.");
       return;
     }
     if (recoveryState === "PARTIAL") {
       saveOperation({ ...record, phase: "MINT_CONFIRMED", lastUpdatedAt: Date.now() });
       setMintAddress(record.mint);
-      setRecoveryMessage("Mint created. Supply setup still needs to finish.");
-      setNotice("Token creation was interrupted after the mint was created. Resume setup to mint supply and revoke both authorities.");
+      setRecoveryMessage("Token created. Supply setup still needs to finish.");
+      setNotice("Token creation was interrupted after the token was created. Resume token setup to mint the supply and disable minting and freezing.");
       return;
     }
     if (recoveryState === "COMPLETE") {
@@ -171,7 +171,7 @@ export function CreateFlow() {
       setMintAddress(record.mint);
       setSaleSupply(formatInputUnits(BigInt(record.totalSupply), record.decimals));
       setRecoveryMessage(null);
-      setNotice("Token setup complete. Continue to terms.");
+      setNotice("Token setup complete. Set sale parameters.");
       setStep(2);
       return;
     }
@@ -237,9 +237,9 @@ export function CreateFlow() {
     !parsedSaleSupply || !parsedMinimum || !parsedHardCap || !parsedWalletCap
       ? "Complete every amount with valid decimal values."
       : termsTokenSupply === null || parsedSaleSupply !== termsTokenSupply
-        ? "The launch supply must equal the token's full fixed supply."
+        ? "The tokens in sale must equal the token's full fixed supply."
         : parsedSaleSupply <= 0n
-          ? "Launch supply must be positive."
+          ? "Tokens in sale must be positive."
         : parsedMinimum <= 0n
           ? "Minimum raise must be positive."
           : parsedHardCap < parsedMinimum
@@ -247,7 +247,7 @@ export function CreateFlow() {
             : parsedWalletCap <= 0n || parsedWalletCap > parsedHardCap
               ? "Max per wallet must be positive and no greater than the hard cap."
               : mode === "existing" && existingCreatorBalance !== null && parsedSaleSupply > existingCreatorBalance
-                ? "Creator does not hold the complete fixed supply for this launch."
+                ? "Creator does not hold the complete fixed supply for this sale."
                 : new Date(endTime).getTime() <= new Date(startTime).getTime()
                   ? "End time must be after start time."
                   : null;
@@ -379,7 +379,7 @@ export function CreateFlow() {
         saveOperation({ ...supplyOperation, phase: "COMPLETE", lastUpdatedAt: Date.now() });
         setSaleSupply(formatInputUnits(parsedTokenSupply, tokenDecimals));
         setNotice(
-          "Token supply is minted exactly once and both authorities are removed. FairBake launches the entire fixed token supply.",
+          "Token setup complete: the full fixed supply is minted, minting and freezing are disabled, and 100% of the supply is ready for this sale.",
         );
       }
       setStep(2);
@@ -409,7 +409,7 @@ export function CreateFlow() {
       const mint = new PublicKey(operation.mint ?? mintAddress);
       const tokenAccount = new PublicKey(operation.tokenAccount ?? "");
       if (!termsTokenSupply || parsedSaleSupply !== termsTokenSupply) {
-        throw new Error("The launch supply must equal the token's full fixed supply.");
+        throw new Error("The tokens in sale must equal the token's full fixed supply.");
       }
       const start = BigInt(Math.floor(new Date(startTime).getTime() / 1000));
       const end = BigInt(Math.floor(new Date(endTime).getTime() / 1000));
@@ -429,7 +429,7 @@ export function CreateFlow() {
         saleSignature: result.signature,
       }));
       setNotice(
-        "Sale initialized and inventory escrowed. The terms are now immutable.",
+        "Sale created. 100% of the fixed token supply enters this sale. Sale parameters are locked after creation.",
       );
       setStep(4);
     } catch (cause) {
@@ -439,6 +439,31 @@ export function CreateFlow() {
     }
   }
 
+  function createAnotherToken() {
+    if (!publicKey || operation.phase !== "COMPLETE") return;
+    clearTokenOperation(localStorage, publicKey.toBase58());
+    setOperation({});
+    setMode("new");
+    setStep(1);
+    setName("");
+    setSymbol("");
+    setMintAddress("");
+    setSupply("1000000");
+    setDecimals("6");
+    setSaleSupply("");
+    setMinimumRaise("");
+    setHardCap("");
+    setMaxPerWallet("");
+    setStartTime(isoLocal(15));
+    setEndTime(isoLocal(60));
+    setExistingTokenSupply(null);
+    setExistingCreatorBalance(null);
+    setBusy(null);
+    setError(null);
+    setNotice(null);
+    setRecoveryMessage(null);
+  }
+
   if (operation.sale)
     return (
       <main className="mx-auto max-w-4xl px-5 py-16 sm:px-8 sm:py-24">
@@ -446,17 +471,17 @@ export function CreateFlow() {
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-sage text-[#506448]">
             <Check />
           </div>
-          <p className="eyebrow mt-8">Launch created</p>
+          <p className="eyebrow mt-8">Sale created</p>
           <h1 className="mt-3 text-4xl font-semibold tracking-[-0.05em]">
-            Your launch is live on-chain.
+            Your sale is on Cookie.
           </h1>
           <p className="mt-4 max-w-xl text-sm leading-6 text-moss">
-            FairBake will read the sale directly from Cookie. Share the
-            canonical page with participants.
+            FairBake reads the sale directly from Cookie. Share this sale page
+            with participants.
           </p>
           <div className="mt-8 grid gap-3 sm:grid-cols-2">
             <Link className="button-primary" href={`/launch/${operation.sale}`}>
-              Open launch
+              Open sale
             </Link>
             <a
               className="button-secondary"
@@ -467,6 +492,14 @@ export function CreateFlow() {
               View creation transaction ↗
             </a>
           </div>
+          {operation.phase === "COMPLETE" && (
+            <button
+              className="mt-5 text-sm font-semibold text-moss underline underline-offset-4 hover:text-ink"
+              onClick={createAnotherToken}
+            >
+              Create another token
+            </button>
+          )}
         </div>
       </main>
     );
@@ -475,17 +508,17 @@ export function CreateFlow() {
     <main className="mx-auto max-w-[1480px] px-5 py-8 sm:px-8 sm:py-10">
       <div className="flex items-center justify-between gap-4 border-b border-line pb-5">
         <h1 className="text-2xl font-semibold tracking-[-0.04em]">
-          Create launch
+          Create sale
         </h1>
         <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-moss">
-          On-chain sale
+          Fixed-window sale
         </span>
       </div>
       <div className="mt-8 grid gap-8 lg:grid-cols-[190px_minmax(0,1fr)] xl:grid-cols-[190px_minmax(0,1fr)_280px]">
         <aside className="h-fit pt-1">
           <p className="eyebrow mb-3">Setup</p>
           <Step number="01" title="Token" active={step === 1} done={step > 1} />
-          <Step number="02" title="Terms" active={step === 2} done={step > 2} />
+          <Step number="02" title="Sale parameters" active={step === 2} done={step > 2} />
           <Step
             number="03"
             title="Review"
@@ -616,16 +649,16 @@ function LaunchPreview({
             {(symbol || "T").slice(0, 1).toUpperCase()}
           </div>
           <h2 className="mt-5 text-2xl font-semibold tracking-[-0.04em] text-paper">
-            {name || "Your launch"}
+            {name || "Your sale"}
           </h2>
           <p className="mt-1 font-mono text-xs text-[#a6b29e]">
             {symbol ? `$${symbol}` : "—"}
           </p>
         </div>
         <div className="grid gap-3 border-t border-white/15 pt-5">
-          <PreviewStat label="Launch supply" value={saleSupply || "—"} />
+          <PreviewStat label="Tokens in sale" value={saleSupply || "—"} />
           <PreviewStat label="Hard cap" value={hardCap ? `${hardCap} COOK` : "—"} />
-          <PreviewStat label="Per wallet" value={maxPerWallet ? `${maxPerWallet} COOK` : "—"} />
+          <PreviewStat label="Max per wallet" value={maxPerWallet ? `${maxPerWallet} COOK` : "—"} />
         </div>
       </div>
     </aside>
@@ -674,7 +707,7 @@ function TokenStep(props: any) {
     <div>
       <p className="eyebrow">Step 1 · Token</p>
       <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
-        Choose the launch asset.
+        Choose or create your token.
       </h2>
       <div className="mt-7 grid grid-cols-2 border-b border-line">
         <button
@@ -718,10 +751,10 @@ function TokenStep(props: any) {
           />
           <div className="sm:col-span-2 border border-line bg-cream/50 p-4 text-sm leading-6 text-moss">
             <LockKeyhole size={16} className="mb-2 text-ink" />
-            <p>FairBake launches the entire fixed token supply.</p>
+            <p>100% of the fixed token supply enters this sale.</p>
             <details className="mt-3 text-xs leading-5">
               <summary className="cursor-pointer font-semibold text-ink">Technical details</summary>
-              <p className="mt-2">Creates a standard SPL mint and revokes both authorities in the creation flow.</p>
+              <p className="mt-2">Creates a standard SPL token, mints the supply once, and disables minting and freezing during setup.</p>
             </details>
           </div>
         </div>
@@ -734,8 +767,8 @@ function TokenStep(props: any) {
             placeholder="Cookie Chain mint address"
           />
           <p className="mt-3 text-xs leading-5 text-moss">
-            We verify standard SPL ownership, revoked mint/freeze authorities,
-            full supply, decimals, and creator inventory from Cookie RPC.
+            FairBake checks the token on Cookie: standard SPL ownership, full
+            supply, minting/freezing permissions, decimals, and your token balance.
           </p>
         </div>
       )}{" "}
@@ -760,7 +793,7 @@ function TokenStep(props: any) {
           </>
         ) : (
           <>
-            {operation.mint && operation.phase !== "COMPLETE" ? "Resume setup" : "Continue to terms"} <ChevronRight size={16} />
+            {operation.mint && operation.phase !== "COMPLETE" ? "Resume token setup" : "Set sale parameters"} <ChevronRight size={16} />
           </>
         )}
       </button>
@@ -771,13 +804,13 @@ function TokenStep(props: any) {
 function TermsStep(props: any) {
   return (
     <div>
-      <p className="eyebrow">Step 2 · Terms</p>
+      <p className="eyebrow">Step 2 · Sale parameters</p>
       <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
-        Set the immutable window.
+        Set the sale window.
       </h2>
       <div className="mt-7 grid gap-5 sm:grid-cols-2">
         <ReadOnlyFact
-          label="Launch supply"
+          label="Tokens in sale"
           value={props.totalSupply ? `${formatUnits(BigInt(props.totalSupply), Number(props.decimals))} ${props.symbol || "tokens"}` : "—"}
         />
         <Field
@@ -812,7 +845,7 @@ function TermsStep(props: any) {
         />
       </div>
       <p className="mt-7 text-sm text-moss">
-        FairBake launches the entire fixed token supply.
+        100% of the fixed token supply enters this sale.
       </p>
       <div className="mt-5 grid gap-3 border-y border-line py-4 sm:grid-cols-3">
         <Stat
@@ -824,7 +857,7 @@ function TermsStep(props: any) {
           }
         />
         <Stat
-          label="Launch supply"
+          label="Tokens in sale"
           value={
             props.parsedSaleSupply
               ? formatUnits(
@@ -835,10 +868,11 @@ function TermsStep(props: any) {
           }
         />
         <Stat
-          label="Supply entering launch"
+          label="Supply entering sale"
           value={props.parsedSaleSupply ? "100%" : "—"}
         />
       </div>
+      <p className="mt-5 text-sm text-moss">Sale parameters are locked after creation. The deployed FairBake program remains upgradeable.</p>
       {props.error && <p className="mt-5 text-sm text-orange">{props.error}</p>}
       <div className="mt-8 flex justify-between gap-3">
         <button className="button-secondary" onClick={props.onBack}>
@@ -849,7 +883,7 @@ function TermsStep(props: any) {
           onClick={props.onContinue}
           disabled={Boolean(props.error)}
         >
-          Review terms <ChevronRight size={16} />
+          Review sale <ChevronRight size={16} />
         </button>
       </div>
     </div>
@@ -860,22 +894,25 @@ function ReviewStep(props: any) {
   return (
     <div>
       <p className="eyebrow">Step 3 · Review</p>
-      <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">Review launch.</h2>
+      <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">Review sale.</h2>
       <div className="mt-7 grid gap-0 border-y border-line">
         <ReviewFact label="Token" value={`${props.name} · ${props.symbol}`} />
         <ReviewFact label="Mint" value={props.mint ? shorten(props.mint, 10, 8) : "—"} />
         <ReviewFact label="Fixed supply" value={props.supply ? `${formatUnits(BigInt(props.supply), Number(props.decimals))} ${props.symbol || "tokens"}` : "—"} />
-        <ReviewFact label="Launch supply" value={props.saleSupply ? `${formatUnits(BigInt(props.saleSupply), Number(props.decimals))} ${props.symbol || "tokens"}` : "—"} />
-        <ReviewFact label="Supply entering launch" value={props.saleSupply ? "100%" : "—"} />
-        <ReviewFact label="Mint authority" value="Removed" />
-        <ReviewFact label="Freeze authority" value="Removed" />
-        <ReviewFact label="Terms locked" value="Cannot be edited after launch" />
+        <ReviewFact label="Tokens in sale" value={props.saleSupply ? `${formatUnits(BigInt(props.saleSupply), Number(props.decimals))} ${props.symbol || "tokens"}` : "—"} />
+        <ReviewFact label="Supply entering sale" value={props.saleSupply ? "100%" : "—"} />
+        <ReviewFact label="Minting" value="DISABLED" />
+        <ReviewFact label="Freezing" value="DISABLED" />
+        <ReviewFact label="Sale terms:" value="LOCKED" />
         <ReviewFact label="Minimum raise" value={props.minimum ? `${formatUnits(BigInt(props.minimum), 9)} COOK` : "—"} />
         <ReviewFact label="Hard cap" value={props.cap ? `${formatUnits(BigInt(props.cap), 9)} COOK` : "—"} />
         <ReviewFact label="Wallet limit" value={props.maxWallet ? `${formatUnits(BigInt(props.maxWallet), 9)} COOK` : "—"} />
         <ReviewFact label="Start" value={new Date(props.start).toLocaleString()} />
         <ReviewFact label="End" value={new Date(props.end).toLocaleString()} />
       </div>
+      <p className="mt-6 text-sm leading-6 text-moss">
+        Creating the sale escrows 100% of the fixed token supply and locks the sale parameters.
+      </p>
       <div className="mt-8 flex justify-between gap-3">
         <button className="button-secondary" onClick={props.onBack}>
           Back
@@ -887,11 +924,11 @@ function ReviewStep(props: any) {
         >
           {props.busy === "sale" ? (
             <>
-              <LoaderCircle size={16} className="animate-spin" /> Initializing…
+              <LoaderCircle size={16} className="animate-spin" /> Creating sale…
             </>
           ) : (
             <>
-              Confirm & initialize <ShieldCheck size={16} />
+              Create sale <ShieldCheck size={16} />
             </>
           )}
         </button>
