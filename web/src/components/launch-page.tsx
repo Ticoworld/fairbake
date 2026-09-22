@@ -431,7 +431,8 @@ function ParticipationCard({
           onClaim={onClaim}
           busy={busy}
         />
-      ) : status === "LIVE" ? (
+      ) : null}
+      {!position && status === "LIVE" ? (
         <>
           <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
             Contribute during the sale.
@@ -488,7 +489,8 @@ function ParticipationCard({
             after the sale closes.
           </p>
         </>
-      ) : status === "ENDED_AWAITING_FINALIZATION" ? (
+      ) : null}
+      {status === "ENDED_AWAITING_FINALIZATION" && !position ? (
         <>
           <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
             ENDED — AWAITING SETTLEMENT
@@ -496,21 +498,24 @@ function ParticipationCard({
           <p className="mt-2 text-sm leading-6 text-moss">
             The contribution window has closed. Any Cookie wallet can close and settle the sale.
           </p>
-          <button
-            className="button-primary mt-6 w-full"
-            disabled={!canTransact || Boolean(busy)}
-            onClick={onFinalize}
-          >
-            {busy === "finalize" ? (
-              <>
-                <LoaderCircle size={16} className="animate-spin" /> Settling…
-              </>
-            ) : (
-              "Close and settle sale"
-            )}
-          </button>
         </>
-      ) : settled ? (
+      ) : null}
+      {status === "ENDED_AWAITING_FINALIZATION" ? (
+        <button
+          className="button-primary mt-6 w-full"
+          disabled={!canTransact || Boolean(busy)}
+          onClick={onFinalize}
+        >
+          {busy === "finalize" ? (
+            <>
+              <LoaderCircle size={16} className="animate-spin" /> Settling…
+            </>
+          ) : (
+            "Close and settle sale"
+          )}
+        </button>
+      ) : null}
+      {settled ? (
         <>
           <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">{status}</h2>
           <p className="mt-2 text-sm leading-6 text-moss">
@@ -547,36 +552,48 @@ function PositionView({
   busy: string | null;
 }) {
   const isPreFinalization = status !== "SUCCESS" && status !== "FAILED";
-  const settled = status === "SUCCESS" || status === "FAILED"
+  const settled = status === "SUCCESS"
     ? settlementWithPrefix(position.contributed, sale.data.saleSupply, sale.data.hardCap, sale.data.totalCommitted, position.committedBefore)
     : null;
+
+  const getSettlementDisplay = () => {
+    if (isPreFinalization) {
+      return { accepted: "Pending", refund: "Pending", allocation: "Pending" };
+    }
+    if (status === "FAILED") {
+      return {
+        accepted: "0 COOK",
+        refund: `${formatUnits(position.contributed, 9)} COOK`,
+        allocation: "0"
+      };
+    }
+    if (status === "SUCCESS" && settled) {
+      return {
+        accepted: `${formatUnits(settled.accepted, 9)} COOK`,
+        refund: `${formatUnits(settled.refund, 9)} COOK`,
+        allocation: `${formatTokenAmount(settled.allocation, decimals)} ${sale.metadata?.symbol ?? "tokens"}`
+      };
+    }
+    return null;
+  };
+
+  const display = getSettlementDisplay();
 
   return (
     <div className="mt-5 grid gap-4">
       <div className="grid gap-3 border-y border-line py-4 text-sm">
         <Fact label="Contribution" value={`${formatUnits(position.contributed, 9)} COOK`} />
-        {isPreFinalization ? (
+        {display && (
           <>
-            <Fact label="Accepted" value="Pending" />
-            <Fact label="COOK refund" value="Pending" />
-            <Fact label="Tokens to claim" value="Pending" />
-          </>
-        ) : (
-          <>
-            <Fact label="Accepted" value={`${formatUnits(settled?.accepted ?? 0n, 9)} COOK`} />
-            <Fact label="COOK refund" value={`${formatUnits(settled?.refund ?? 0n, 9)} COOK`} />
-            <Fact label="Tokens to claim" value={`${formatTokenAmount(settled?.allocation ?? 0n, decimals)} ${sale.metadata?.symbol ?? "tokens"}`} />
+            <Fact label="Accepted" value={display.accepted} />
+            <Fact label="COOK refund" value={display.refund} />
+            <Fact label="Tokens to claim" value={display.allocation} />
           </>
         )}
       </div>
       {isPreFinalization && (
         <div className="rounded-xl border border-line p-4 text-sm text-moss">
           Final amounts are calculated after the sale closes.
-        </div>
-      )}
-      {(status === "LIVE" || status === "UPCOMING") && (
-        <div className="rounded-xl border border-line p-4 text-sm text-moss">
-          Final amounts will be calculated after the sale closes.
         </div>
       )}
       {status === "SUCCESS" || status === "FAILED" ? (
