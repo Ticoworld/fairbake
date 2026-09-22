@@ -1,9 +1,12 @@
+import { FAIRBAKE_PROGRAM_ID } from "./config.ts";
+
 export type SaleCreationPhase =
   | "PREPARED"
   | "SUBMITTED"
   | "COMPLETE"
   | "FAILED_RETRYABLE"
   | "BLOCKED";
+
 
 export type SaleCreationOperation = {
   operationId: string;
@@ -61,7 +64,7 @@ export function classifySaleInspection(
 ): SaleRecoveryState {
   if (!inspection.exists) return "MISSING";
 
-  const safeOwner = inspection.owner === "9GYL8FqGfCzWZ1v6w8F8yJ8QK3FPdBG8W8B1rHEVnzKQ"; // FAIRBAKE_PROGRAM_ID
+  const safeOwner = inspection.owner === FAIRBAKE_PROGRAM_ID.toBase58();
 
   if (!safeOwner) return "UNSAFE_MISMATCH";
 
@@ -180,9 +183,5 @@ export function clearSaleCreationOperation(
   storage.removeItem(saleOperationStorageKey(creator));
 }
 
-export function canClearSaleCreationOperation(
-  operation: SaleCreationOperation,
-  state: SaleRecoveryState,
-): boolean {
-  return state === "MISSING" || operation.phase === "COMPLETE";
-}
+// Clearing policy is authoritatively defined by canClearSaleCreation() in sale-recovery.ts.
+// Do not add a duplicate policy here.

@@ -434,6 +434,11 @@ export function CreateFlow() {
     setBusy("sale");
     setError(null);
     setNotice(null);
+
+    // Local authoritative operation variable.
+    // Updated at every durable-state write so the catch block is never stale.
+    let currentSaleOp: SaleCreationOperation | null = null;
+
     try {
       const mint = new PublicKey(operation.mint ?? mintAddress);
       const tokenAccount = new PublicKey(operation.tokenAccount ?? "");
@@ -443,11 +448,11 @@ export function CreateFlow() {
       const start = BigInt(Math.floor(new Date(startTime).getTime() / 1000));
       const end = BigInt(Math.floor(new Date(endTime).getTime() / 1000));
 
-      // Derive expected Sale PDA before submission
+      // Derive expected Sale PDA before submission.
       const [expectedSale] = findSalePda(publicKey, mint);
       const expectedSaleAddr = expectedSale.toBase58();
 
-      // Create and persist PREPARED operation before wallet signing
+      // PREPARED — durable intent established before wallet signing.
       const preparedOp: SaleCreationOperation = {
         operationId: `sale-${Date.now()}`,
         creator: publicKey.toBase58(),
@@ -464,9 +469,12 @@ export function CreateFlow() {
         createdAt: Date.now(),
         lastUpdatedAt: Date.now(),
       };
+      currentSaleOp = preparedOp;
       writeSaleCreationOperation(localStorage, preparedOp);
       setSaleOperation(preparedOp);
 
+      // Wallet signs and sends transaction. Failure here (rejection / RPC refusal)
+      // leaves PREPARED on disk. The local variable is still PREPARED at this point.
       const result = await initializeSale(signer!, {
         mint,
         creatorTokenAccount: tokenAccount,
@@ -478,7 +486,8 @@ export function CreateFlow() {
         endTime: end,
       });
 
-      // Update operation to SUBMITTED with signature before confirmation wait
+      // SUBMITTED — signature + blockhash persisted before confirmation wait.
+      // Must be written before confirmSubmittedTransaction() is awaited.
       const submittedOp: SaleCreationOperation = {
         ...preparedOp,
         phase: "SUBMITTED",
@@ -487,15 +496,17 @@ export function CreateFlow() {
         lastValidBlockHeight: result.lastValidBlockHeight ?? undefined,
         lastUpdatedAt: Date.now(),
       };
+      currentSaleOp = submittedOp;
       writeSaleCreationOperation(localStorage, submittedOp);
       setSaleOperation(submittedOp);
 
-      // Mark as COMPLETE after successful submission
+      // COMPLETE — only reached if confirmSubmittedTransaction() did not throw.
       const completeOp: SaleCreationOperation = {
         ...submittedOp,
         phase: "COMPLETE",
         lastUpdatedAt: Date.now(),
       };
+      currentSaleOp = completeOp;
       writeSaleCreationOperation(localStorage, completeOp);
       setSaleOperation(completeOp);
 
@@ -510,20 +521,30 @@ export function CreateFlow() {
       setStep(4);
     } catch (cause) {
       setError(readableTransactionError(cause));
-      // Mark as FAILED_RETRYABLE if submission failed
-      if (saleOperation) {
-        const failedOp: SaleCreationOperation = {
-          ...saleOperation,
-          phase: "FAILED_RETRYABLE",
-          lastUpdatedAt: Date.now(),
-        };
-        writeSaleCreationOperation(localStorage, failedOp);
-        setSaleOperation(failedOp);
+
+      // Use currentSaleOp — never the stale saleOperation React closure.
+      if (currentSaleOp !== null) {
+        const phaseAtFailure = currentSaleOp.phase;
+
+        if (phaseAtFailure === "PREPARED") {
+          // Failure before a signature was obtained.
+          // PREPARED intent stays durable. No retry state needed yet — the
+          // recovery reconciliation path will handle this on reload.
+          // Do NOT downgrade to FAILED_RETRYABLE: no transaction was submitted.
+        } else if (phaseAtFailure === "SUBMITTED") {
+          // Failure after a signature was returned (confirmation unknown/failed).
+          // SUBMITTED must be preserved. The signature is on-disk.
+          // Recovery reconciliation will later decide FAILED_RETRYABLE or COMPLETE
+          // by inspecting the expected Sale PDA and signature status.
+          // Do NOT directly downgrade to FAILED_RETRYABLE here.
+        }
+        // COMPLETE is unreachable in the catch path; nothing to do.
       }
     } finally {
       setBusy(null);
     }
   }
+
 
   function createAnotherToken() {
     if (!publicKey || operation.phase !== "COMPLETE") return;
