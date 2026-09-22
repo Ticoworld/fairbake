@@ -34,6 +34,13 @@ import {
   writeTokenOperation,
   type TokenOperation,
 } from "@/lib/token-operation";
+import {
+  clearSaleCreationOperation,
+  readSaleCreationOperation,
+  writeSaleCreationOperation,
+  type SaleCreationOperation,
+} from "@/lib/sale-operation";
+import { findSalePda } from "@/lib/pda";
 
 type Mode = "new" | "existing";
 type Operation = Partial<TokenOperation> & {
@@ -58,6 +65,7 @@ export function CreateFlow() {
   const [startTime, setStartTime] = useState(isoLocal(15));
   const [endTime, setEndTime] = useState(isoLocal(60));
   const [operation, setOperation] = useState<Operation>({});
+  const [saleOperation, setSaleOperation] = useState<SaleCreationOperation | null>(null);
   const [existingTokenSupply, setExistingTokenSupply] = useState<bigint | null>(null);
   const [existingCreatorBalance, setExistingCreatorBalance] = useState<bigint | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -68,12 +76,17 @@ export function CreateFlow() {
   useEffect(() => {
     if (!publicKey) {
       setOperation({});
+      setSaleOperation(null);
       setRecoveryMessage(null);
       setStep(1);
       return;
     }
     const restored = readTokenOperation(localStorage, publicKey.toBase58());
+    const restoredSaleOp = readSaleCreationOperation(localStorage, publicKey.toBase58());
+
     setOperation(restored ?? {});
+    setSaleOperation(restoredSaleOp);
+
     if (restored) {
       setName(restored.tokenName);
       setSymbol(restored.symbol);
@@ -81,6 +94,16 @@ export function CreateFlow() {
       setSupply(formatInputUnits(BigInt(restored.totalSupply), restored.decimals));
       setSaleSupply(formatInputUnits(BigInt(restored.totalSupply), restored.decimals));
     }
+
+    // If sale operation exists and is COMPLETE, restore sale address
+    if (restoredSaleOp && restoredSaleOp.phase === "COMPLETE") {
+      setOperation(prev => ({
+        ...prev,
+        sale: restoredSaleOp.expectedSale,
+        saleSignature: restoredSaleOp.signature,
+      }));
+    }
+
     setStep(restored?.phase === "COMPLETE" ? 2 : 1);
   }, [publicKey]);
 
@@ -99,6 +122,12 @@ export function CreateFlow() {
     )
       writeTokenOperation(localStorage, operation as TokenOperation);
   }, [operation, publicKey]);
+
+  useEffect(() => {
+    if (publicKey && saleOperation) {
+      writeSaleCreationOperation(localStorage, saleOperation);
+    }
+  }, [saleOperation, publicKey]);
 
   function saveOperation(next: Operation) {
     setOperation(next);
@@ -401,7 +430,7 @@ export function CreateFlow() {
   }
 
   async function launch() {
-    if (!requireWallet() || termsError) return;
+    if (!requireWallet() || termsError || !publicKey) return;
     setBusy("sale");
     setError(null);
     setNotice(null);
@@ -413,6 +442,31 @@ export function CreateFlow() {
       }
       const start = BigInt(Math.floor(new Date(startTime).getTime() / 1000));
       const end = BigInt(Math.floor(new Date(endTime).getTime() / 1000));
+
+      // Derive expected Sale PDA before submission
+      const [expectedSale] = findSalePda(publicKey, mint);
+      const expectedSaleAddr = expectedSale.toBase58();
+
+      // Create and persist PREPARED operation before wallet signing
+      const preparedOp: SaleCreationOperation = {
+        operationId: `sale-${Date.now()}`,
+        creator: publicKey.toBase58(),
+        mint: mint.toBase58(),
+        creatorTokenAccount: tokenAccount.toBase58(),
+        expectedSale: expectedSaleAddr,
+        saleSupply: parsedSaleSupply!.toString(),
+        minimumRaise: parsedMinimum!.toString(),
+        hardCap: parsedHardCap!.toString(),
+        maxPerWallet: parsedWalletCap!.toString(),
+        startTime: start.toString(),
+        endTime: end.toString(),
+        phase: "PREPARED",
+        createdAt: Date.now(),
+        lastUpdatedAt: Date.now(),
+      };
+      writeSaleCreationOperation(localStorage, preparedOp);
+      setSaleOperation(preparedOp);
+
       const result = await initializeSale(signer!, {
         mint,
         creatorTokenAccount: tokenAccount,
@@ -423,6 +477,28 @@ export function CreateFlow() {
         startTime: start,
         endTime: end,
       });
+
+      // Update operation to SUBMITTED with signature before confirmation wait
+      const submittedOp: SaleCreationOperation = {
+        ...preparedOp,
+        phase: "SUBMITTED",
+        signature: result.signature,
+        blockhash: result.blockhash ?? undefined,
+        lastValidBlockHeight: result.lastValidBlockHeight ?? undefined,
+        lastUpdatedAt: Date.now(),
+      };
+      writeSaleCreationOperation(localStorage, submittedOp);
+      setSaleOperation(submittedOp);
+
+      // Mark as COMPLETE after successful submission
+      const completeOp: SaleCreationOperation = {
+        ...submittedOp,
+        phase: "COMPLETE",
+        lastUpdatedAt: Date.now(),
+      };
+      writeSaleCreationOperation(localStorage, completeOp);
+      setSaleOperation(completeOp);
+
       setOperation((current) => ({
         ...current,
         sale: result.sale.toBase58(),
@@ -434,6 +510,16 @@ export function CreateFlow() {
       setStep(4);
     } catch (cause) {
       setError(readableTransactionError(cause));
+      // Mark as FAILED_RETRYABLE if submission failed
+      if (saleOperation) {
+        const failedOp: SaleCreationOperation = {
+          ...saleOperation,
+          phase: "FAILED_RETRYABLE",
+          lastUpdatedAt: Date.now(),
+        };
+        writeSaleCreationOperation(localStorage, failedOp);
+        setSaleOperation(failedOp);
+      }
     } finally {
       setBusy(null);
     }
@@ -441,8 +527,13 @@ export function CreateFlow() {
 
   function createAnotherToken() {
     if (!publicKey || operation.phase !== "COMPLETE") return;
+    // Only clear if sale creation is also complete
+    if (!saleOperation || saleOperation.phase !== "COMPLETE") return;
+
     clearTokenOperation(localStorage, publicKey.toBase58());
+    clearSaleCreationOperation(localStorage, publicKey.toBase58());
     setOperation({});
+    setSaleOperation(null);
     setMode("new");
     setStep(1);
     setName("");

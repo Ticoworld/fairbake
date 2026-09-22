@@ -213,13 +213,15 @@ export async function validateExistingMint(mint: PublicKey, wallet: PublicKey) {
   };
 }
 
-export async function initializeSale(wallet: WalletSigner, input: { mint: PublicKey; creatorTokenAccount: PublicKey; saleSupply: bigint; minimumRaise: bigint; hardCap: bigint; maxPerWallet: bigint; startTime: bigint; endTime: bigint }): Promise<{ sale: PublicKey; signature: string }> {
+export async function initializeSale(wallet: WalletSigner, input: { mint: PublicKey; creatorTokenAccount: PublicKey; saleSupply: bigint; minimumRaise: bigint; hardCap: bigint; maxPerWallet: bigint; startTime: bigint; endTime: bigint }): Promise<{ sale: PublicKey; signature: string; blockhash?: string; lastValidBlockHeight?: number }> {
   const [sale] = findSalePda(wallet.publicKey, input.mint);
   const [saleVault] = findVaultPda(sale);
   const [treasury] = findTreasuryPda(sale);
   const program = createProgram(wallet);
   const instruction = await program.methods.initializeSale(new BN(input.saleSupply.toString()), new BN(input.minimumRaise.toString()), new BN(input.hardCap.toString()), new BN(input.maxPerWallet.toString()), new BN(input.startTime.toString()), new BN(input.endTime.toString())).accounts({ creator: wallet.publicKey, sale, mint: input.mint, creatorTokenAccount: input.creatorTokenAccount, saleVault, treasury, systemProgram: SystemProgram.programId, tokenProgram: TOKEN_PROGRAM_ID, rent: SYSVAR_RENT_PUBKEY }).instruction();
-  return { sale, ...(await send(wallet, new Transaction().add(instruction))) };
+  const submitted = await submitTransaction(wallet, new Transaction().add(instruction));
+  await confirmSubmittedTransaction(submitted);
+  return { sale, signature: submitted.signature, blockhash: submitted.blockhash, lastValidBlockHeight: submitted.lastValidBlockHeight };
 }
 
 export async function buy(wallet: WalletSigner, sale: PublicKey, mint: PublicKey, contribution: bigint): Promise<TxResult> {
