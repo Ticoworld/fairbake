@@ -35,10 +35,10 @@ const TOKEN_ACCOUNT_STR = "11111111111111111111111111111114";
 function createOperation(overrides?: Partial<SaleCreationOperation>): SaleCreationOperation {
   const base: SaleCreationOperation = {
     operationId: "op-1",
-    creator: "creator-addr",
-    mint: "mint-addr",
-    creatorTokenAccount: "token-account-addr",
-    expectedSale: "sale-pda-addr",
+    creator: CREATOR_PUBKEY_STR,
+    mint: MINT_PUBKEY_STR,
+    creatorTokenAccount: TOKEN_ACCOUNT_STR,
+    expectedSale: "11111111111111111111111111111115",
     saleSupply: "1000000000",
     minimumRaise: "100000000000",
     hardCap: "1000000000000",
@@ -497,4 +497,164 @@ test("TEST 10: matching sale in any on-chain lifecycle state → CASE_A_MATCHING
   const expectedState: SaleRecoveryCase = "CASE_A_MATCHING_SALE";
   assert.strictEqual(state, expectedState);
   assert.strictEqual(recovery, "MATCHING_SALE");
+});
+
+// ===========================================================================
+// INTEGRATION TESTS (reconcileSaleOperation)
+// ===========================================================================
+
+import { reconcileSaleOperation } from "./sale-recovery.ts";
+import type { Connection } from "@solana/web3.js";
+
+function mockConnection(overrides: { accountInfo?: any, signatureStatus?: any } = {}) {
+  return {
+    getAccountInfo: async () => overrides.accountInfo || null,
+    getSignatureStatuses: async () => ({ value: [overrides.signatureStatus || null] }),
+  } as unknown as Connection;
+}
+
+test("INT TEST 1: Persisted PREPARED + sale absent → normal explicit create path", async () => {
+  const conn = mockConnection();
+  const operation = createOperation({ phase: "PREPARED" });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, null);
+  assert.strictEqual(decision.canRetry, false);
+});
+
+test("INT TEST 2: Persisted SUBMITTED + matching Sale PDA → COMPLETE", async () => {
+  const operation = createOperation({ phase: "SUBMITTED" });
+  const conn = mockConnection({
+    accountInfo: {
+      owner: buildPubkey(FAIRBAKE_PROGRAM_ID),
+      data: await encodeValidSaleAccount(),
+    }
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "COMPLETE");
+  assert.strictEqual(decision.canRetry, false);
+});
+
+test("INT TEST 3: Persisted FAILED_RETRYABLE + matching Sale PDA → COMPLETE", async () => {
+  const operation = createOperation({ phase: "FAILED_RETRYABLE" });
+  const conn = mockConnection({
+    accountInfo: {
+      owner: buildPubkey(FAIRBAKE_PROGRAM_ID),
+      data: await encodeValidSaleAccount(),
+    }
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "COMPLETE");
+});
+
+test("INT TEST 4: Persisted BLOCKED + matching Sale PDA → COMPLETE", async () => {
+  const operation = createOperation({ phase: "BLOCKED" });
+  const conn = mockConnection({
+    accountInfo: {
+      owner: buildPubkey(FAIRBAKE_PROGRAM_ID),
+      data: await encodeValidSaleAccount(),
+    }
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "COMPLETE");
+});
+
+test("INT TEST 5: SUBMITTED + signature err + sale absent → FAILED_RETRYABLE", async () => {
+  const operation = createOperation({ phase: "SUBMITTED", signature: "sig123" });
+  const conn = mockConnection({
+    signatureStatus: { confirmationStatus: "confirmed", err: { InstructionError: [0, "CustomError"] } }
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "FAILED_RETRYABLE");
+  assert.strictEqual(decision.canRetry, true);
+});
+
+test("INT TEST 6: SUBMITTED + signature success + sale absent → BLOCKED", async () => {
+  const operation = createOperation({ phase: "SUBMITTED", signature: "sig123" });
+  const conn = mockConnection({
+    signatureStatus: { confirmationStatus: "confirmed", err: null } // success
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "BLOCKED");
+  assert.strictEqual(decision.isBlocked, true);
+  assert.strictEqual(decision.canRetry, false);
+});
+
+test("INT TEST 7: SUBMITTED + signature unknown + live blockhash → stays SUBMITTED", async () => {
+  const operation = createOperation({ phase: "SUBMITTED", signature: "sig123", lastValidBlockHeight: 150 });
+  const conn = mockConnection({
+    signatureStatus: null
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100); // 100 <= 150
+  
+  assert.strictEqual(decision.newPhase, null); // Stays SUBMITTED
+  assert.strictEqual(decision.canRetry, false);
+});
+
+test("INT TEST 8: SUBMITTED + signature unknown + expired blockhash → FAILED_RETRYABLE", async () => {
+  const operation = createOperation({ phase: "SUBMITTED", signature: "sig123", lastValidBlockHeight: 50 });
+  const conn = mockConnection({
+    signatureStatus: null
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100); // 100 > 50
+  
+  assert.strictEqual(decision.newPhase, "FAILED_RETRYABLE");
+  assert.strictEqual(decision.canRetry, true);
+});
+
+test("INT TEST 9: FAILED_RETRYABLE retry gate → matching sale prevents new transaction", async () => {
+  const operation = createOperation({ phase: "FAILED_RETRYABLE" });
+  const conn = mockConnection({
+    accountInfo: {
+      owner: buildPubkey(FAIRBAKE_PROGRAM_ID),
+      data: await encodeValidSaleAccount(),
+    }
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "COMPLETE");
+});
+
+test("INT TEST 10: FAILED_RETRYABLE retry gate → absent PDA permits explicit retry", async () => {
+  const operation = createOperation({ phase: "FAILED_RETRYABLE" });
+  const conn = mockConnection(); // absent
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, null); // keeps FAILED_RETRYABLE
+  assert.strictEqual(decision.canRetry, true);
+});
+
+test("INT TEST 11: UNSAFE_MISMATCH → BLOCKED → retry forbidden", async () => {
+  const operation = createOperation({ phase: "PREPARED" });
+  const conn = mockConnection({
+    accountInfo: {
+      owner: buildPubkey(FAIRBAKE_PROGRAM_ID),
+      data: Buffer.concat([WRONG_DISCRIMINATOR, Buffer.alloc(200, 0)]),
+    }
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "BLOCKED");
+  assert.strictEqual(decision.isBlocked, true);
+  assert.strictEqual(decision.canRetry, false);
+});
+
+test("INT TEST 12: COMPLETE or matching sale reload → completed sale screen state restored", async () => {
+  // Test 12 translates to: does a MATCHING sale properly return COMPLETE and non-blocking?
+  const operation = createOperation({ phase: "PREPARED" });
+  const conn = mockConnection({
+    accountInfo: {
+      owner: buildPubkey(FAIRBAKE_PROGRAM_ID),
+      data: await encodeValidSaleAccount(),
+    }
+  });
+  const decision = await reconcileSaleOperation(conn, operation, 100);
+  
+  assert.strictEqual(decision.newPhase, "COMPLETE");
+  assert.strictEqual(decision.canRetry, false);
 });

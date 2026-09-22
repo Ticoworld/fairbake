@@ -40,6 +40,10 @@ import {
   writeSaleCreationOperation,
   type SaleCreationOperation,
 } from "@/lib/sale-operation";
+import {
+  reconcileSaleOperation,
+  type ReconcileDecision,
+} from "@/lib/sale-recovery";
 import { findSalePda } from "@/lib/pda";
 
 type Mode = "new" | "existing";
@@ -72,12 +76,15 @@ export function CreateFlow() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
+  // Holds the most recent decision from reconcileSaleOperation.
+  const [saleRecoveryDecision, setSaleRecoveryDecision] = useState<ReconcileDecision | null>(null);
 
   useEffect(() => {
     if (!publicKey) {
       setOperation({});
       setSaleOperation(null);
       setRecoveryMessage(null);
+      setSaleRecoveryDecision(null);
       setStep(1);
       return;
     }
@@ -95,7 +102,9 @@ export function CreateFlow() {
       setSaleSupply(formatInputUnits(BigInt(restored.totalSupply), restored.decimals));
     }
 
-    // If sale operation exists and is COMPLETE, restore sale address
+    // If sale operation is COMPLETE (from any mode), restore the completed sale screen.
+    // This is authoritative: the saleOperation record is the source of truth,
+    // not operation.sale, so existing-token creators also get the screen.
     if (restoredSaleOp && restoredSaleOp.phase === "COMPLETE") {
       setOperation(prev => ({
         ...prev,
@@ -218,6 +227,63 @@ export function CreateFlow() {
       setRecoveryMessage(null);
       setError(`Could not reconcile token setup yet: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey]);
+
+  // Sale recovery reconciliation: runs automatically on wallet restore for any
+  // non-COMPLETE sale operation. COMPLETE operations are already restored above.
+  useEffect(() => {
+    if (!publicKey) return;
+    const restoredSaleOp = readSaleCreationOperation(localStorage, publicKey.toBase58());
+    if (!restoredSaleOp || restoredSaleOp.phase === "COMPLETE") return;
+
+    let cancelled = false;
+
+    async function runReconcile() {
+      const blockHeight = await connection.getBlockHeight("confirmed").catch(() => 0);
+      if (cancelled) return;
+
+      const decision = await reconcileSaleOperation(connection, restoredSaleOp!, blockHeight);
+      if (cancelled) return;
+
+      setSaleRecoveryDecision(decision);
+
+      if (decision.newPhase !== null) {
+        const updated: SaleCreationOperation = {
+          ...restoredSaleOp!,
+          phase: decision.newPhase,
+          lastUpdatedAt: Date.now(),
+        };
+        writeSaleCreationOperation(localStorage, updated);
+        setSaleOperation(updated);
+
+        // If the reconciler found a matching sale (COMPLETE), restore the completed
+        // sale screen automatically — same path as a fresh successful launch.
+        if (decision.newPhase === "COMPLETE") {
+          setOperation(prev => ({
+            ...prev,
+            sale: restoredSaleOp!.expectedSale,
+            saleSignature: restoredSaleOp!.signature,
+          }));
+        }
+      }
+    }
+
+    void runReconcile().catch((cause) => {
+      if (cancelled) return;
+      // Non-fatal: show a soft recovery message, do not block the UI.
+      setSaleRecoveryDecision({
+        newPhase: null,
+        message: `Sale recovery check failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        isBlocked: false,
+        canRetry: false,
+        pdaState: "MISSING",
+        recoveryCase: "UNKNOWN",
+      });
+    });
+
     return () => {
       cancelled = true;
     };
@@ -545,6 +611,123 @@ export function CreateFlow() {
     }
   }
 
+  /**
+   * Explicit retry for FAILED_RETRYABLE operations.
+   *
+   * Before attempting to re-sign/re-submit:
+   *  1. Re-runs inspectSalePda (via reconcileSaleOperation).
+   *  2. If a matching sale now exists  → recovers COMPLETE, no new transaction.
+   *  3. If a mismatch is found         → transitions to BLOCKED, no retry.
+   *  4. Only if still MISSING          → proceeds with the new explicit launch.
+   */
+  async function retrySale() {
+    if (!requireWallet() || !publicKey || !saleOperation) return;
+    if (saleOperation.phase !== "FAILED_RETRYABLE") return;
+    setBusy("sale-retry");
+    setError(null);
+    try {
+      // Re-check PDA before any new signing.
+      const blockHeight = await connection.getBlockHeight("confirmed").catch(() => 0);
+      const decision = await reconcileSaleOperation(connection, saleOperation, blockHeight);
+      setSaleRecoveryDecision(decision);
+
+      if (decision.newPhase === "COMPLETE") {
+        // A matching sale appeared — recover COMPLETE instead.
+        const updated: SaleCreationOperation = {
+          ...saleOperation,
+          phase: "COMPLETE",
+          lastUpdatedAt: Date.now(),
+        };
+        writeSaleCreationOperation(localStorage, updated);
+        setSaleOperation(updated);
+        setOperation(prev => ({ ...prev, sale: saleOperation.expectedSale, saleSignature: saleOperation.signature }));
+        return;
+      }
+
+      if (decision.newPhase === "BLOCKED" || decision.isBlocked) {
+        const blocked: SaleCreationOperation = {
+          ...saleOperation,
+          phase: "BLOCKED",
+          lastUpdatedAt: Date.now(),
+        };
+        writeSaleCreationOperation(localStorage, blocked);
+        setSaleOperation(blocked);
+        setError(decision.message);
+        return;
+      }
+
+      if (!decision.canRetry) {
+        setError(decision.message || "Sale PDA is not clear for retry.");
+        return;
+      }
+
+      // PDA is confirmed absent, retry is safe. Prepare a fresh submission intent
+      // re-using the same parameters from the persisted failed operation.
+      const freshPrepared: SaleCreationOperation = {
+        ...saleOperation,
+        operationId: `sale-${Date.now()}`,
+        phase: "PREPARED",
+        signature: undefined,
+        blockhash: undefined,
+        lastValidBlockHeight: undefined,
+        lastUpdatedAt: Date.now(),
+      };
+      let currentSaleOp: SaleCreationOperation = freshPrepared;
+      writeSaleCreationOperation(localStorage, freshPrepared);
+      setSaleOperation(freshPrepared);
+
+      const mint = new PublicKey(saleOperation.mint);
+      const tokenAccount = new PublicKey(saleOperation.creatorTokenAccount);
+      const result = await initializeSale(signer!, {
+        mint,
+        creatorTokenAccount: tokenAccount,
+        saleSupply: BigInt(saleOperation.saleSupply),
+        minimumRaise: BigInt(saleOperation.minimumRaise),
+        hardCap: BigInt(saleOperation.hardCap),
+        maxPerWallet: BigInt(saleOperation.maxPerWallet),
+        startTime: BigInt(saleOperation.startTime),
+        endTime: BigInt(saleOperation.endTime),
+      });
+
+      const submittedOp: SaleCreationOperation = {
+        ...freshPrepared,
+        phase: "SUBMITTED",
+        signature: result.signature,
+        blockhash: result.blockhash ?? undefined,
+        lastValidBlockHeight: result.lastValidBlockHeight ?? undefined,
+        lastUpdatedAt: Date.now(),
+      };
+      currentSaleOp = submittedOp;
+      writeSaleCreationOperation(localStorage, submittedOp);
+      setSaleOperation(submittedOp);
+
+      const completeOp: SaleCreationOperation = {
+        ...submittedOp,
+        phase: "COMPLETE",
+        lastUpdatedAt: Date.now(),
+      };
+      currentSaleOp = completeOp;
+      writeSaleCreationOperation(localStorage, completeOp);
+      setSaleOperation(completeOp);
+
+      setOperation(prev => ({
+        ...prev,
+        sale: result.sale.toBase58(),
+        saleSignature: result.signature,
+      }));
+      setSaleRecoveryDecision(null);
+    } catch (cause) {
+      // Re-read the persisted op in case the catch occurs after SUBMITTED was written.
+      const onDisk = publicKey ? readSaleCreationOperation(localStorage, publicKey.toBase58()) : null;
+      if (onDisk && onDisk.phase === "SUBMITTED") {
+        // Leave SUBMITTED on disk — recovery reconciliation will classify on next reload.
+      }
+      setError(readableTransactionError(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
 
   function createAnotherToken() {
     if (!publicKey || operation.phase !== "COMPLETE") return;
@@ -576,7 +759,12 @@ export function CreateFlow() {
     setRecoveryMessage(null);
   }
 
-  if (operation.sale)
+  // Completed sale screen — shown when the saleOperation is COMPLETE (authoritative)
+  // OR when operation.sale is set from a fresh successful launch.
+  // This covers both new-token and existing-token paths.
+  const completedSaleAddress = operation.sale ?? (saleOperation?.phase === "COMPLETE" ? saleOperation.expectedSale : null);
+  const completedSaleSignature = operation.saleSignature ?? saleOperation?.signature;
+  if (completedSaleAddress)
     return (
       <main className="mx-auto max-w-4xl px-5 py-16 sm:px-8 sm:py-24">
         <div className="panel p-8 sm:p-12">
@@ -592,17 +780,19 @@ export function CreateFlow() {
             with participants.
           </p>
           <div className="mt-8 grid gap-3 sm:grid-cols-2">
-            <Link className="button-primary" href={`/launch/${operation.sale}`}>
+            <Link className="button-primary" href={`/launch/${completedSaleAddress}`}>
               Open sale
             </Link>
-            <a
-              className="button-secondary"
-              href={explorer.transaction(operation.saleSignature ?? "")}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View creation transaction ↗
-            </a>
+            {completedSaleSignature && (
+              <a
+                className="button-secondary"
+                href={explorer.transaction(completedSaleSignature)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View creation transaction ↗
+              </a>
+            )}
           </div>
           {operation.phase === "COMPLETE" && (
             <button
@@ -615,6 +805,103 @@ export function CreateFlow() {
         </div>
       </main>
     );
+
+  // Sale recovery panel — shown when reconciliation has produced a decision
+  // for a non-COMPLETE persisted sale operation.
+  if (saleOperation && saleOperation.phase !== "COMPLETE" && saleRecoveryDecision) {
+    const isWaiting =
+      saleOperation.phase === "SUBMITTED" && !saleRecoveryDecision.canRetry && !saleRecoveryDecision.isBlocked;
+    const isRetryable = saleOperation.phase === "FAILED_RETRYABLE" && saleRecoveryDecision.canRetry;
+    const isBlocked = saleRecoveryDecision.isBlocked || saleOperation.phase === "BLOCKED";
+
+    return (
+      <main className="mx-auto max-w-4xl px-5 py-16 sm:px-8 sm:py-24">
+        <div className="panel p-8 sm:p-12">
+          {isBlocked ? (
+            <>
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-orange/10 text-orange">
+                <CircleAlert />
+              </div>
+              <p className="eyebrow mt-8">Sale creation blocked</p>
+              <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
+                FairBake found an inconsistent sale-creation state.
+              </h1>
+              <p className="mt-4 max-w-xl text-sm leading-6 text-moss">
+                {saleRecoveryDecision.message}
+              </p>
+              <p className="mt-4 text-sm text-moss">
+                Sale PDA: <span className="font-mono">{saleOperation.expectedSale}</span>
+              </p>
+            </>
+          ) : isWaiting ? (
+            <>
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-cream text-moss">
+                <LoaderCircle className="animate-spin" />
+              </div>
+              <p className="eyebrow mt-8">Sale creation pending</p>
+              <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
+                Waiting for confirmation.
+              </h1>
+              <p className="mt-4 max-w-xl text-sm leading-6 text-moss">
+                {saleRecoveryDecision.message}
+              </p>
+              {saleOperation.signature && (
+                <a
+                  className="mt-6 inline-block text-sm font-semibold text-moss underline underline-offset-4 hover:text-ink"
+                  href={explorer.transaction(saleOperation.signature)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View transaction ↗
+                </a>
+              )}
+            </>
+          ) : isRetryable ? (
+            <>
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-orange/10 text-orange">
+                <CircleAlert />
+              </div>
+              <p className="eyebrow mt-8">Sale creation did not land</p>
+              <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
+                Previous sale creation did not land on Cookie.
+              </h1>
+              <p className="mt-4 max-w-xl text-sm leading-6 text-moss">
+                {saleRecoveryDecision.message}
+              </p>
+              <button
+                className="button-primary mt-8"
+                onClick={() => void retrySale()}
+                disabled={busy === "sale-retry"}
+              >
+                {busy === "sale-retry" ? (
+                  <><LoaderCircle size={16} className="animate-spin" /> Retrying…</>
+                ) : (
+                  <>Retry sale creation <ShieldCheck size={16} /></>
+                )}
+              </button>
+              {error && (
+                <div className="mt-4 flex items-start gap-2 rounded-xl border border-orange/30 bg-orange/5 p-4 text-sm leading-6 text-orange">
+                  <CircleAlert size={17} className="mt-0.5 shrink-0" />
+                  {error}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-cream text-moss">
+                <LoaderCircle className="animate-spin" />
+              </div>
+              <p className="eyebrow mt-8">Checking sale status</p>
+              <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
+                Reconciling sale creation.
+              </h1>
+              <p className="mt-4 text-sm leading-6 text-moss">{saleRecoveryDecision.message}</p>
+            </>
+          )}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-[1480px] px-5 py-8 sm:px-8 sm:py-10">

@@ -5,6 +5,7 @@ import { FAIRBAKE_PROGRAM_ID } from "./config.ts";
 import { toBigInt } from "./format.ts";
 import type {
   SaleCreationOperation,
+  SaleCreationPhase,
   SaleInspection,
   SaleRecoveryState,
 } from "./sale-operation.ts";
@@ -281,4 +282,211 @@ export function canClearSaleCreation(
   // PREPARED: only safe to abandon if no sale exists on-chain.
   if (operation.phase === "PREPARED") return recovery === "MISSING";
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// ReconcileDecision — the typed result returned by reconcileSaleOperation.
+//
+// newPhase: the phase the operation should transition to, or null if no
+//   transition is needed (e.g. PREPARED + absent, or SUBMITTED + live blockhash).
+// message: user-visible status string (always present).
+// isBlocked: true only for the inconsistent SUCCESS+ABSENT case – no retry.
+// ---------------------------------------------------------------------------
+export type ReconcileDecision = {
+  /** Phase to write to localStorage + React state. null = no change. */
+  newPhase: SaleCreationPhase | null;
+  /** Short, human-readable status for display in the UI. */
+  message: string;
+  /** True when the operation is in an inconsistent/irrecoverable state. */
+  isBlocked: boolean;
+  /** True when an explicit retry is safe. Derived from canRetrySaleCreation. */
+  canRetry: boolean;
+  /** The raw recovery state classification from the PDA inspection. */
+  pdaState: SaleRecoveryState;
+  /** The full case classification. */
+  recoveryCase: SaleRecoveryCase;
+};
+
+/**
+ * Pure orchestration function – no React state, no side-effects.
+ *
+ * Wiring order (spec §2, §4, §5):
+ *  1. Inspect expected Sale PDA first.
+ *  2. If MATCHING_SALE   → COMPLETE regardless of local phase.
+ *  3. If UNSAFE_MISMATCH → BLOCKED.
+ *  4. If MISSING + PREPARED → no change (keep PREPARED, allow explicit launch).
+ *  5. If MISSING + SUBMITTED + signature:
+ *       a. confirmed + err null (SUCCESS) + absent  → BLOCKED (inconsistent).
+ *       b. confirmed + err non-null (FAILED) + absent → FAILED_RETRYABLE.
+ *       c. unknown/null                              → check blockhash liveness.
+ *  6. If MISSING + SUBMITTED + no signature:
+ *       live blockhash  → SUBMITTED stays (CASE_E_WAITING).
+ *       expired blockhash → FAILED_RETRYABLE.
+ *  7. MISSING + any other terminal phase (FAILED_RETRYABLE, BLOCKED):
+ *       FAILED_RETRYABLE → canRetry=true.
+ *       BLOCKED           → canRetry=false.
+ */
+export async function reconcileSaleOperation(
+  connection: Connection,
+  operation: SaleCreationOperation,
+  currentBlockHeight: number,
+): Promise<ReconcileDecision> {
+  // Step 1: inspect the expected Sale PDA.
+  const salePda = new PublicKey(operation.expectedSale);
+  const pdaInspection = await inspectSalePda(connection, salePda, operation);
+  const pdaState = classifySaleInspection(operation, pdaInspection);
+
+  // Step 2: MATCHING_SALE always wins, regardless of local phase.
+  if (pdaState === "MATCHING_SALE") {
+    return {
+      newPhase: "COMPLETE",
+      message: "Sale confirmed on Cookie. Your sale is live.",
+      isBlocked: false,
+      canRetry: false,
+      pdaState,
+      recoveryCase: "CASE_A_MATCHING_SALE",
+    };
+  }
+
+  // Step 3: UNSAFE_MISMATCH → BLOCKED.
+  if (pdaState === "UNSAFE_MISMATCH") {
+    return {
+      newPhase: "BLOCKED",
+      message: `FairBake found an inconsistent sale-creation state: ${pdaInspection.error ?? "the expected sale PDA contains mismatched fields"}.`,
+      isBlocked: true,
+      canRetry: false,
+      pdaState,
+      recoveryCase: "CASE_F_MISMATCH",
+    };
+  }
+
+  // From here: pdaState === MISSING.
+
+  // Step 4: PREPARED + absent → normal create path, no transition needed.
+  if (operation.phase === "PREPARED") {
+    return {
+      newPhase: null,
+      message: "Ready to create your sale.",
+      isBlocked: false,
+      canRetry: false,
+      pdaState,
+      recoveryCase: "CASE_B_PREPARED_NO_SUBMISSION",
+    };
+  }
+
+  // Step 5: SUBMITTED + absent → check signature or blockhash liveness.
+  if (operation.phase === "SUBMITTED") {
+    if (operation.signature) {
+      // A signature was persisted. Query its status.
+      const sigStatus = await checkSignatureStatus(connection, operation.signature);
+
+      if (sigStatus !== null) {
+        if (sigStatus.err === null && sigStatus.confirmed) {
+          // 5a. SUCCESS + PDA absent → inconsistent, BLOCKED.
+          return {
+            newPhase: "BLOCKED",
+            message:
+              "Sale creation appears confirmed on Cookie but the expected sale account was not found. " +
+              "This is an inconsistent state — do not retry.",
+            isBlocked: true,
+            canRetry: false,
+            pdaState,
+            recoveryCase: "CASE_C_SUBMITTED_NO_SALE",
+          };
+        }
+
+        if (sigStatus.err !== null) {
+          // 5b. FAILED + PDA absent → FAILED_RETRYABLE.
+          return {
+            newPhase: "FAILED_RETRYABLE",
+            message: "Previous sale creation did not land on Cookie. You may retry.",
+            isBlocked: false,
+            canRetry: true,
+            pdaState,
+            recoveryCase: "CASE_C_SUBMITTED_NO_SALE",
+          };
+        }
+      }
+
+      // 5c. Signature unknown (sigStatus null or not yet confirmed/finalized).
+      // Check blockhash liveness as a secondary signal.
+      if (operation.lastValidBlockHeight && currentBlockHeight <= operation.lastValidBlockHeight) {
+        return {
+          newPhase: null,
+          message:
+            "Sale creation was submitted. FairBake is still checking Cookie for confirmation.",
+          isBlocked: false,
+          canRetry: false,
+          pdaState,
+          recoveryCase: "CASE_E_WAITING_SIGNATURE_LIVE",
+        };
+      }
+
+      // Blockhash expired and signature still unknown → FAILED_RETRYABLE.
+      return {
+        newPhase: "FAILED_RETRYABLE",
+        message: "Previous sale creation did not land on Cookie. You may retry.",
+        isBlocked: false,
+        canRetry: true,
+        pdaState,
+        recoveryCase: "CASE_E_BLOCKHASH_EXPIRED_FAILED",
+      };
+    }
+
+    // No signature persisted — distinguish by blockhash liveness only.
+    if (operation.lastValidBlockHeight && currentBlockHeight <= operation.lastValidBlockHeight) {
+      return {
+        newPhase: null,
+        message:
+          "Sale creation was submitted. FairBake is still checking Cookie for confirmation.",
+        isBlocked: false,
+        canRetry: false,
+        pdaState,
+        recoveryCase: "CASE_E_WAITING_SIGNATURE_LIVE",
+      };
+    }
+
+    return {
+      newPhase: "FAILED_RETRYABLE",
+      message: "Previous sale creation did not land on Cookie. You may retry.",
+      isBlocked: false,
+      canRetry: true,
+      pdaState,
+      recoveryCase: "CASE_E_BLOCKHASH_EXPIRED_FAILED",
+    };
+  }
+
+  // Step 6: FAILED_RETRYABLE + MISSING → stay FAILED_RETRYABLE, expose retry.
+  if (operation.phase === "FAILED_RETRYABLE") {
+    return {
+      newPhase: null,
+      message: "Previous sale creation did not land on Cookie. You may retry.",
+      isBlocked: false,
+      canRetry: canRetrySaleCreation(operation, pdaState),
+      pdaState,
+      recoveryCase: "UNKNOWN",
+    };
+  }
+
+  // Step 7: BLOCKED + MISSING → remain blocked, no retry.
+  if (operation.phase === "BLOCKED") {
+    return {
+      newPhase: null,
+      message: "FairBake found an inconsistent sale-creation state. Do not retry.",
+      isBlocked: true,
+      canRetry: false,
+      pdaState,
+      recoveryCase: "UNKNOWN",
+    };
+  }
+
+  // COMPLETE + MISSING → unusual (was COMPLETE, PDA now absent — possibly pruned or wrong network).
+  return {
+    newPhase: null,
+    message: "",
+    isBlocked: false,
+    canRetry: false,
+    pdaState,
+    recoveryCase: "UNKNOWN",
+  };
 }
