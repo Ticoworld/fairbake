@@ -6,6 +6,7 @@ Creators escrow a fixed token supply into a sale with a defined start time, end 
 
 ## Current deployment
 
+- **Live app:** https://fairbake.vercel.app/
 - **Network:** Cookie Chain
 - **Program ID:** `8ZxnPLAfaSja6MrS6z21QZsohrW515v3cjXA3dMucnuX`
 - **Cookie RPC:** `https://rpc.cookiescan.io`
