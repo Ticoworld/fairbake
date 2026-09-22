@@ -260,6 +260,21 @@ export function canRetrySaleCreation(
 }
 
 /**
+ * Check if the persisted sale window is still safe to retry exactly as-is.
+ * Requires:
+ * 1. The window start time is strictly in the future (startTime > now).
+ * 2. The window is valid (endTime > startTime).
+ */
+export function isSaleWindowRetryable(
+  operation: SaleCreationOperation,
+  currentTimeSeconds: number,
+): boolean {
+  const start = Number(operation.startTime);
+  const end = Number(operation.endTime);
+  return start > currentTimeSeconds && end > start;
+}
+
+/**
  * Authoritative clearing policy for a SaleCreationOperation.
  *
  * COMPLETE  – clearable (only via the intentional "Create another token" path).

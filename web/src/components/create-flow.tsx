@@ -42,6 +42,7 @@ import {
 } from "@/lib/sale-operation";
 import {
   reconcileSaleOperation,
+  isSaleWindowRetryable,
   type ReconcileDecision,
 } from "@/lib/sale-recovery";
 import { findSalePda } from "@/lib/pda";
@@ -535,6 +536,30 @@ export function CreateFlow() {
         createdAt: Date.now(),
         lastUpdatedAt: Date.now(),
       };
+
+      // PDA recheck before fresh submission: ensure it is still absent
+      const blockHeight = await connection.getBlockHeight("confirmed").catch(() => 0);
+      const checkDecision = await reconcileSaleOperation(connection, preparedOp, blockHeight);
+      
+      if (checkDecision.newPhase === "COMPLETE") {
+        // MATCHING_SALE discovered during review/retry
+        const completeOp: SaleCreationOperation = {
+          ...preparedOp,
+          phase: "COMPLETE",
+          lastUpdatedAt: Date.now(),
+        };
+        writeSaleCreationOperation(localStorage, completeOp);
+        setSaleOperation(completeOp);
+        setOperation((current) => ({ ...current, sale: expectedSaleAddr }));
+        setNotice("Sale was already created on Cookie.");
+        setStep(4);
+        setBusy(null);
+        return; // abort new launch
+      }
+      if (checkDecision.pdaState !== "MISSING") {
+        throw new Error("Sale creation blocked: the expected PDA already exists but does not match this intent.");
+      }
+
       currentSaleOp = preparedOp;
       writeSaleCreationOperation(localStorage, preparedOp);
       setSaleOperation(preparedOp);
@@ -857,35 +882,65 @@ export function CreateFlow() {
               )}
             </>
           ) : isRetryable ? (
-            <>
-              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-orange/10 text-orange">
-                <CircleAlert />
-              </div>
-              <p className="eyebrow mt-8">Sale creation did not land</p>
-              <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
-                Previous sale creation did not land on Cookie.
-              </h1>
-              <p className="mt-4 max-w-xl text-sm leading-6 text-moss">
-                {saleRecoveryDecision.message}
-              </p>
-              <button
-                className="button-primary mt-8"
-                onClick={() => void retrySale()}
-                disabled={busy === "sale-retry"}
-              >
-                {busy === "sale-retry" ? (
-                  <><LoaderCircle size={16} className="animate-spin" /> Retrying…</>
-                ) : (
-                  <>Retry sale creation <ShieldCheck size={16} /></>
-                )}
-              </button>
-              {error && (
-                <div className="mt-4 flex items-start gap-2 rounded-xl border border-orange/30 bg-orange/5 p-4 text-sm leading-6 text-orange">
-                  <CircleAlert size={17} className="mt-0.5 shrink-0" />
-                  {error}
+            !isSaleWindowRetryable(saleOperation, Math.floor(Date.now() / 1000)) ? (
+              <>
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-orange/10 text-orange">
+                  <CircleAlert />
                 </div>
-              )}
-            </>
+                <p className="eyebrow mt-8">Sale window stale</p>
+                <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
+                  Your previous sale creation did not land, but its sale window is now stale.
+                </h1>
+                <p className="mt-4 max-w-xl text-sm leading-6 text-moss">
+                  Choose a new start and end time before retrying.
+                </p>
+                <button
+                  className="button-primary mt-8"
+                  onClick={() => {
+                    setStartTime(formatLocalIso(new Date(Number(saleOperation.startTime) * 1000)));
+                    setEndTime(formatLocalIso(new Date(Number(saleOperation.endTime) * 1000)));
+                    setSaleSupply(formatInputUnits(BigInt(saleOperation.saleSupply), tokenDecimals));
+                    setMinimumRaise(formatInputUnits(BigInt(saleOperation.minimumRaise), 9));
+                    setHardCap(formatInputUnits(BigInt(saleOperation.hardCap), 9));
+                    setMaxPerWallet(formatInputUnits(BigInt(saleOperation.maxPerWallet), 9));
+                    setStep(2);
+                    setSaleRecoveryDecision(null);
+                  }}
+                >
+                  Review sale window
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-orange/10 text-orange">
+                  <CircleAlert />
+                </div>
+                <p className="eyebrow mt-8">Sale creation did not land</p>
+                <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
+                  Previous sale creation did not land on Cookie.
+                </h1>
+                <p className="mt-4 max-w-xl text-sm leading-6 text-moss">
+                  {saleRecoveryDecision.message}
+                </p>
+                <button
+                  className="button-primary mt-8"
+                  onClick={() => void retrySale()}
+                  disabled={busy === "sale-retry"}
+                >
+                  {busy === "sale-retry" ? (
+                    <><LoaderCircle size={16} className="animate-spin" /> Retrying…</>
+                  ) : (
+                    <>Retry sale creation <ShieldCheck size={16} /></>
+                  )}
+                </button>
+                {error && (
+                  <div className="mt-4 flex items-start gap-2 rounded-xl border border-orange/30 bg-orange/5 p-4 text-sm leading-6 text-orange">
+                    <CircleAlert size={17} className="mt-0.5 shrink-0" />
+                    {error}
+                  </div>
+                )}
+              </>
+            )
           ) : (
             <>
               <div className="grid h-12 w-12 place-items-center rounded-2xl bg-cream text-moss">
@@ -1381,6 +1436,10 @@ function Stat({ label, value }: { label: string; value: string }) {
 function isoLocal(minutesFromNow: number) {
   const date = new Date(Date.now() + minutesFromNow * 60_000);
   date.setSeconds(0, 0);
+  return formatLocalIso(date);
+}
+
+function formatLocalIso(date: Date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
     .toISOString()
     .slice(0, 16);

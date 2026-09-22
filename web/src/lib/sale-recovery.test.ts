@@ -658,3 +658,44 @@ test("INT TEST 12: COMPLETE or matching sale reload → completed sale screen st
   assert.strictEqual(decision.newPhase, "COMPLETE");
   assert.strictEqual(decision.canRetry, false);
 });
+
+// ===========================================================================
+// isSaleWindowRetryable TESTS
+// ===========================================================================
+import { isSaleWindowRetryable } from "./sale-recovery.ts";
+
+test("STALE RETRY TEST 1: startTime > now AND endTime > startTime → retry permitted", () => {
+  const operation = createOperation({
+    startTime: "1000",
+    endTime: "2000",
+  });
+  // now = 500
+  assert.strictEqual(isSaleWindowRetryable(operation, 500), true);
+});
+
+test("STALE RETRY TEST 2: startTime === now → exact retry forbidden", () => {
+  const operation = createOperation({
+    startTime: "1000",
+    endTime: "2000",
+  });
+  // now = 1000
+  assert.strictEqual(isSaleWindowRetryable(operation, 1000), false);
+});
+
+test("STALE RETRY TEST 3: startTime < now < endTime → exact retry forbidden", () => {
+  const operation = createOperation({
+    startTime: "1000",
+    endTime: "2000",
+  });
+  // now = 1500
+  assert.strictEqual(isSaleWindowRetryable(operation, 1500), false);
+});
+
+test("STALE RETRY TEST 4: endTime < now → exact retry forbidden", () => {
+  const operation = createOperation({
+    startTime: "1000",
+    endTime: "2000",
+  });
+  // now = 2500
+  assert.strictEqual(isSaleWindowRetryable(operation, 2500), false);
+});
