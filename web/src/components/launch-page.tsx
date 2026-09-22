@@ -546,7 +546,7 @@ function PositionView({
   onClaim: () => void;
   busy: string | null;
 }) {
-  const isPreFinalization = status !== "SUCCESS" && status !== "FAILED" && status !== "LIVE" && status !== "UPCOMING";
+  const isPreFinalization = status !== "SUCCESS" && status !== "FAILED";
   const settled = status === "SUCCESS" || status === "FAILED"
     ? settlementWithPrefix(position.contributed, sale.data.saleSupply, sale.data.hardCap, sale.data.totalCommitted, position.committedBefore)
     : null;
@@ -710,7 +710,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 function Integrity({ label }: { label: string }) {
-  const displayLabel = label === "Terms" ? "Sale terms" : label;
+  const displayLabel = label === "Terms" ? "Sale parameters" : label;
   return (
     <div className="flex items-center gap-2">
       <Check size={14} className="text-[#66815c]" />

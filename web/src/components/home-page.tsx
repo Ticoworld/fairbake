@@ -58,6 +58,7 @@ export function HomePage() {
     {!loading && !preview && query.error && <div className="mt-8"><ChainState isLoading={false} error={query.error} onRetry={() => void query.refetch()}/></div>}
     {!loading && (preview || !query.error) && <>
       <section className="mt-6" id="preview-sale">{featured ? <FeaturedLaunch sale={featured.sale} status={featured.status} preview={preview}/> : <NoLiveLaunches/>}</section>
+      <p className="mt-8 max-w-2xl text-sm leading-6 text-moss">Contribute during one fixed window. If demand exceeds the hard cap, contributions settle pro-rata and excess COOK is refunded.</p>
       {open.length > 1 && <section className="mt-10"><div className="mb-4 flex items-end justify-between border-b border-line pb-4"><h2 className="text-xl font-semibold tracking-[-0.03em]">Other live sales</h2><Link href="/explore?status=LIVE" className="inline-flex items-center gap-1 text-xs font-semibold text-moss hover:text-ink">View all <ArrowUpRight size={13}/></Link></div><LaunchGrid sales={open.slice(1).map(({ sale }) => sale)}/></section>}
       {settled.length > 0 && <section className="mt-10"><div className="mb-4 flex items-end justify-between border-b border-line pb-4"><h2 className="text-xl font-semibold tracking-[-0.03em]">Recently closed sales</h2><Link href="/explore?status=CLOSED" className="inline-flex items-center gap-1 text-xs font-semibold text-moss hover:text-ink">View history <ArrowUpRight size={13}/></Link></div><LaunchGrid sales={settled.slice(0, 4).map(({ sale }) => sale)}/></section>}
     </>}

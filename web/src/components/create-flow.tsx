@@ -903,7 +903,7 @@ function ReviewStep(props: any) {
         <ReviewFact label="Supply entering sale" value={props.saleSupply ? "100%" : "—"} />
         <ReviewFact label="Minting" value="DISABLED" />
         <ReviewFact label="Freezing" value="DISABLED" />
-        <ReviewFact label="Sale terms:" value="LOCKED" />
+        <ReviewFact label="Sale parameters" value="LOCKED" />
         <ReviewFact label="Minimum raise" value={props.minimum ? `${formatUnits(BigInt(props.minimum), 9)} COOK` : "—"} />
         <ReviewFact label="Hard cap" value={props.cap ? `${formatUnits(BigInt(props.cap), 9)} COOK` : "—"} />
         <ReviewFact label="Wallet limit" value={props.maxWallet ? `${formatUnits(BigInt(props.maxWallet), 9)} COOK` : "—"} />
